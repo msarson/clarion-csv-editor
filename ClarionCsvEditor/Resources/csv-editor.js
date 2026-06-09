@@ -105,6 +105,9 @@ function ensureTable() {
         if (!isNaN(idx)) headers[idx] = column.getDefinition().title;
         markDirty();
     });
+    // Reliable post-mutation hook: fires after edits/adds/deletes are applied,
+    // so the host's CSV cache is never stale (Tabulator's add/delete are async).
+    table.on("dataChanged", function () { pushSnapshot(); });
 }
 
 /* ---- Header-mode helpers ---- */
@@ -157,7 +160,13 @@ function buildFrom(rows) {
 
     suppressDirty = true;
     table.setColumns(buildColumns());
-    table.setData(data).then(() => { suppressDirty = false; });
+    // Push the snapshot only once the data is actually applied — getCsv() reads
+    // the live grid, which is empty until this promise resolves. Pushing earlier
+    // would cache an empty file and a subsequent save would wipe the CSV.
+    table.setData(data).then(() => {
+        suppressDirty = false;
+        pushSnapshot();
+    });
     return data.length;
 }
 
@@ -192,7 +201,7 @@ function loadCsv(text, fileName, delim) {
 
     const rowCount = buildFrom(rows);
     setDirty(false);
-    pushSnapshot(); // seed the host cache with the loaded (clean) content
+    // Note: the host cache is seeded by buildFrom() once setData() resolves.
     setStatusForFile(fileName, rowCount);
 }
 
@@ -242,8 +251,7 @@ function toggleHeader() {
     const data = currentDataMatrix();
     const full = hasHeader ? [headers.slice(), ...data] : data;
     hasHeader = want;
-    const rowCount = buildFrom(full);
-    pushSnapshot(); // representation changed; keep the host cache in sync
+    const rowCount = buildFrom(full); // re-seeds the host cache when setData resolves
     setStatusForFile(lastFileName || "(untitled)", rowCount);
 }
 

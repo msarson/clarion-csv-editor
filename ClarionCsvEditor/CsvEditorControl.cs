@@ -279,6 +279,12 @@ namespace ClarionCsvEditor
             string fileName = Path.GetFileName(filePath);
             string delimiter = filePath.EndsWith(".tsv", StringComparison.OrdinalIgnoreCase) ? "\t" : ",";
 
+            // Safety net: seed the cache with the original file text so a save that
+            // somehow precedes the first grid snapshot writes back the original
+            // content rather than an empty file. The snapshot overwrites this once
+            // the grid has loaded.
+            _latestCsv = content;
+
             InvokeScript("loadCsv", content, fileName, delimiter);
             IsDirty = false;
         }
