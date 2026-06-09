@@ -295,12 +295,27 @@ namespace ClarionCsvEditor
 
         private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            // CSV snapshots come through as a raw string (prefixed) to avoid
-            // JSON-escaping a potentially large payload; control signals come
-            // through as JSON objects.
+            // Two message shapes arrive here:
+            //   - CSV snapshots: a raw string, "CSV:" + csv (postMessage(string))
+            //   - control signals: JSON objects, { "type": ... } (postMessage(object))
+            // Distinguish robustly without relying on TryGetWebMessageAsString's
+            // throw-on-object behaviour (which varies): a raw-string message shows up
+            // in WebMessageAsJson as a JSON string literal (starts with '"'), an object
+            // as '{'.
+            var json = e.WebMessageAsJson;
+
             string asString = null;
-            try { asString = e.TryGetWebMessageAsString(); }
-            catch { /* not a string message — it's an object */ }
+            if (!string.IsNullOrEmpty(json) && json.Length >= 2 && json[0] == '"' && json[json.Length - 1] == '"')
+            {
+                // Raw string message — decode the JSON string literal back to text.
+                asString = DecodeJsonString(json);
+            }
+            else
+            {
+                // Belt-and-suspenders: some SDK builds expose it directly.
+                try { asString = e.TryGetWebMessageAsString(); }
+                catch { asString = null; }
+            }
 
             if (asString != null && asString.StartsWith(CsvSnapshotPrefix, StringComparison.Ordinal))
             {
@@ -308,7 +323,7 @@ namespace ClarionCsvEditor
                 return;
             }
 
-            HandleWebMessage(e.WebMessageAsJson);
+            HandleWebMessage(json);
         }
 
         private void HandleWebMessage(string message)
@@ -412,6 +427,73 @@ namespace ClarionCsvEditor
             int valEnd = i;
             while (valEnd < json.Length && json[valEnd] != ',' && json[valEnd] != '}') valEnd++;
             return json.Substring(i, valEnd - i).Trim();
+        }
+
+        /// <summary>
+        /// Decodes a complete JSON string literal (including the surrounding quotes)
+        /// back to text, handling every escape — \n \r \t \" \\ \/ \b \f and \uXXXX —
+        /// so non-ASCII content (e.g. "Sørensen") survives the round-trip through
+        /// WebMessageAsJson. Returns the input unchanged if it isn't a quoted literal.
+        /// </summary>
+        private static string DecodeJsonString(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return json;
+            if (json == "null") return null;
+            if (json.Length < 2 || json[0] != '"' || json[json.Length - 1] != '"')
+                return json;
+
+            var sb = new System.Text.StringBuilder(json.Length - 2);
+            int i = 1;
+            int end = json.Length - 1;
+            while (i < end)
+            {
+                char c = json[i];
+                if (c != '\\')
+                {
+                    sb.Append(c);
+                    i++;
+                    continue;
+                }
+                if (i + 1 >= end)
+                {
+                    sb.Append(c);
+                    i++;
+                    continue;
+                }
+                char esc = json[i + 1];
+                switch (esc)
+                {
+                    case '"': sb.Append('"'); i += 2; break;
+                    case '\\': sb.Append('\\'); i += 2; break;
+                    case '/': sb.Append('/'); i += 2; break;
+                    case 'b': sb.Append('\b'); i += 2; break;
+                    case 'f': sb.Append('\f'); i += 2; break;
+                    case 'n': sb.Append('\n'); i += 2; break;
+                    case 'r': sb.Append('\r'); i += 2; break;
+                    case 't': sb.Append('\t'); i += 2; break;
+                    case 'u':
+                        if (i + 6 <= end &&
+                            int.TryParse(json.Substring(i + 2, 4),
+                                System.Globalization.NumberStyles.HexNumber,
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                out int codeUnit))
+                        {
+                            sb.Append((char)codeUnit);
+                            i += 6;
+                        }
+                        else
+                        {
+                            sb.Append(esc);
+                            i += 2;
+                        }
+                        break;
+                    default:
+                        sb.Append(esc);
+                        i += 2;
+                        break;
+                }
+            }
+            return sb.ToString();
         }
 
         #endregion
