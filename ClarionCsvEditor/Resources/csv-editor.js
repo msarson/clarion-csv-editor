@@ -62,7 +62,10 @@ function ensureTable() {
     table = new Tabulator("#grid", {
         height: "100%",
         layout: "fitDataStretch",
-        selectableRows: true,
+        // Single-row selection: clicking a cell in another row moves the
+        // highlight rather than accumulating selections. Tabulator deselects
+        // the previous row once the limit (1) is exceeded.
+        selectableRows: 1,
         reactiveData: false,
         columns: [],
         data: [],
