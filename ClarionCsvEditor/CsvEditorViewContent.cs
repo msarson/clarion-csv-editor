@@ -75,8 +75,21 @@ namespace ClarionCsvEditor
         }
 
         /// <summary>
-        /// Called by the IDE's File &gt; Save and File &gt; Save As (the latter with a
-        /// new path). Writes the current grid content and updates the tab to match.
+        /// File &gt; Save binds here (FileOperationDelegate is parameterless). The base
+        /// implementation saves to AbstractViewContent's own private fileName field,
+        /// which this class never sets because it overrides FileName with its own
+        /// backing field — so save to our path instead.
+        /// </summary>
+        public override void Save()
+        {
+            if (!string.IsNullOrEmpty(_fileName))
+                Save(_fileName);
+        }
+
+        /// <summary>
+        /// Called by the IDE's File &gt; Save (via the parameterless overload above) and
+        /// File &gt; Save As (with a new path). Writes the current grid content and
+        /// updates the tab to match.
         /// </summary>
         public override void Save(string fileName)
         {
