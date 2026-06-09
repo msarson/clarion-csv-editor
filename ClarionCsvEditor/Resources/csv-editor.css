@@ -58,6 +58,11 @@ body {
     cursor: pointer;
 }
 
+.toolbar button.active {
+    background: #d0e4f5;
+    border-color: #6aa3cc;
+}
+
 .toolbar .spacer {
     flex: 1 1 auto;
 }
@@ -95,6 +100,12 @@ body.dark-mode .toolbar button {
 
 body.dark-mode .toolbar button:hover {
     background: #404040;
+}
+
+body.dark-mode .toolbar button.active {
+    background: #094771;
+    border-color: #1f6fb2;
+    color: #fff;
 }
 
 body.dark-mode .toolbar button:disabled,

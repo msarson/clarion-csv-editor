@@ -12,12 +12,23 @@ namespace ClarionCsvEditor
     /// Main user control for the CSV Editor addin.
     /// Hosts a WebView2 control that renders an editable grid (Tabulator) over a
     /// CSV file parsed with Papa Parse. The C# side owns the file on disk; the
-    /// JavaScript side owns the grid. They talk over WebView2 web messages:
-    ///   C# -> JS : ExecuteScriptAsync("loadCsv(...)"), "setDarkMode(...)"
-    ///   JS -> C# : window.chrome.webview.postMessage({ type, ... })
+    /// JavaScript side owns the grid.
+    ///
+    /// Communication over WebView2 messages:
+    ///   C# -> JS : ExecuteScriptAsync("loadCsv(...)"), "setDarkMode(...)", "onFileSaved(...)"
+    ///   JS -> C# (object) : { type: "ready" | "contentChanged" | "saveRequested" | "darkModeChanged" }
+    ///   JS -> C# (string) : "CSV:" + csvText  — the current grid serialised as CSV.
+    ///
+    /// The CSV snapshot is pushed on load and after every change so the host
+    /// always holds the latest content. That lets Save run synchronously (just
+    /// write the cache), which is required because the IDE's File > Save calls
+    /// ViewContent.Save(string) synchronously and blocking on WebView2's async
+    /// ExecuteScriptAsync would deadlock the UI thread.
     /// </summary>
     public partial class CsvEditorControl : UserControl
     {
+        private const string CsvSnapshotPrefix = "CSV:";
+
         private readonly SettingsService _settingsService;
 
         private bool _isWebViewReady;
@@ -25,11 +36,15 @@ namespace ClarionCsvEditor
         private string _pendingFilePath;
         private string _tempHtmlPath;
         private string _currentFilePath;
+        private string _latestCsv = "";
         private bool _isDarkMode;
         private bool _isDirty;
 
         /// <summary>Raised when the dirty state changes, so a hosting ViewContent can mirror it.</summary>
         public event EventHandler DirtyChanged;
+
+        /// <summary>Raised when a save changes the backing file path (Save As), with the new path.</summary>
+        public event Action<string> FileNameChanged;
 
         public bool IsDirty
         {
@@ -43,6 +58,8 @@ namespace ClarionCsvEditor
                 }
             }
         }
+
+        public string CurrentFilePath => _currentFilePath;
 
         public CsvEditorControl()
         {
@@ -111,7 +128,6 @@ namespace ClarionCsvEditor
                     {
                         await Task.Delay(100);
                         _isDarkMode = _settingsService.Get("DarkMode") == "true";
-                        menuDarkMode.Checked = _isDarkMode;
                         if (_isDarkMode)
                             await webView.ExecuteScriptAsync("setDarkMode(true)");
 
@@ -169,7 +185,7 @@ namespace ClarionCsvEditor
             return File.Exists(path) ? File.ReadAllText(path) : null;
         }
 
-        #region Public API
+        #region Public API (used by the hosting ViewContent / Pad)
 
         /// <summary>Loads a CSV/TSV file into the grid. Defers if WebView2 is not ready yet.</summary>
         public void LoadFile(string filePath)
@@ -182,15 +198,70 @@ namespace ClarionCsvEditor
             OpenFile(filePath);
         }
 
-        /// <summary>Pulls the current grid content and writes it back to the current file.</summary>
-        public void SaveFile()
+        /// <summary>
+        /// Writes the current grid content to <paramref name="path"/>. Synchronous, using
+        /// the cached snapshot pushed from JS — safe to call from the IDE's File &gt; Save.
+        /// Throws on I/O failure so the IDE's ObservedSave can report it.
+        /// </summary>
+        public void SaveToFile(string path)
         {
-            _ = SaveFileAsync();
+            File.WriteAllText(path, _latestCsv ?? "");
+
+            bool pathChanged = !string.Equals(_currentFilePath, path, StringComparison.OrdinalIgnoreCase);
+            _currentFilePath = path;
+            _settingsService.Set("LastOpenFolder", Path.GetDirectoryName(path));
+            IsDirty = false;
+            InvokeScript("onFileSaved", Path.GetFileName(path));
+
+            if (pathChanged)
+                FileNameChanged?.Invoke(path);
+        }
+
+        /// <summary>
+        /// Save initiated from inside the editor (toolbar button / Ctrl+S in the page).
+        /// Writes to the current file, or prompts for a path when untitled.
+        /// </summary>
+        public void SaveInteractive()
+        {
+            if (string.IsNullOrEmpty(_currentFilePath))
+            {
+                SaveInteractiveAs();
+                return;
+            }
+            try { SaveToFile(_currentFilePath); }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not save:\n" + ex.Message, "CSV Editor",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void SaveInteractiveAs()
+        {
+            using (var dialog = new SaveFileDialog())
+            {
+                dialog.Filter = "CSV files (*.csv)|*.csv|TSV files (*.tsv)|*.tsv|All files (*.*)|*.*";
+                dialog.Title = "Save CSV File";
+                dialog.DefaultExt = "csv";
+                if (!string.IsNullOrEmpty(_currentFilePath))
+                {
+                    dialog.InitialDirectory = Path.GetDirectoryName(_currentFilePath);
+                    dialog.FileName = Path.GetFileName(_currentFilePath);
+                }
+
+                if (dialog.ShowDialog() != DialogResult.OK) return;
+                try { SaveToFile(dialog.FileName); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Could not save:\n" + ex.Message, "CSV Editor",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
         }
 
         #endregion
 
-        #region File operations
+        #region File loading
 
         private void OpenFile(string filePath)
         {
@@ -212,70 +283,25 @@ namespace ClarionCsvEditor
             IsDirty = false;
         }
 
-        private void OpenFileDialogAndLoad()
-        {
-            using (var dialog = new OpenFileDialog())
-            {
-                dialog.Filter = "CSV files (*.csv)|*.csv|TSV files (*.tsv)|*.tsv|All files (*.*)|*.*";
-                dialog.Title = "Open CSV File";
-
-                var lastFolder = _settingsService.Get("LastOpenFolder");
-                if (!string.IsNullOrEmpty(lastFolder) && Directory.Exists(lastFolder))
-                    dialog.InitialDirectory = lastFolder;
-
-                if (dialog.ShowDialog() == DialogResult.OK)
-                    OpenFile(dialog.FileName);
-            }
-        }
-
-        private async Task SaveFileAsync()
-        {
-            if (string.IsNullOrEmpty(_currentFilePath))
-            {
-                await SaveFileAsAsync();
-                return;
-            }
-
-            string csv = await GetCsvFromGridAsync();
-            if (csv == null) return;
-
-            File.WriteAllText(_currentFilePath, csv);
-            IsDirty = false;
-            InvokeScript("onFileSaved", Path.GetFileName(_currentFilePath));
-        }
-
-        private async Task SaveFileAsAsync()
-        {
-            using (var dialog = new SaveFileDialog())
-            {
-                dialog.Filter = "CSV files (*.csv)|*.csv|TSV files (*.tsv)|*.tsv|All files (*.*)|*.*";
-                dialog.Title = "Save CSV File";
-                dialog.DefaultExt = "csv";
-
-                if (!string.IsNullOrEmpty(_currentFilePath))
-                {
-                    dialog.InitialDirectory = Path.GetDirectoryName(_currentFilePath);
-                    dialog.FileName = Path.GetFileName(_currentFilePath);
-                }
-
-                if (dialog.ShowDialog() != DialogResult.OK) return;
-
-                string csv = await GetCsvFromGridAsync();
-                if (csv == null) return;
-
-                File.WriteAllText(dialog.FileName, csv);
-                _currentFilePath = dialog.FileName;
-                IsDirty = false;
-                InvokeScript("onFileSaved", Path.GetFileName(dialog.FileName));
-            }
-        }
-
         #endregion
 
         #region JavaScript communication
 
         private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
+            // CSV snapshots come through as a raw string (prefixed) to avoid
+            // JSON-escaping a potentially large payload; control signals come
+            // through as JSON objects.
+            string asString = null;
+            try { asString = e.TryGetWebMessageAsString(); }
+            catch { /* not a string message — it's an object */ }
+
+            if (asString != null && asString.StartsWith(CsvSnapshotPrefix, StringComparison.Ordinal))
+            {
+                _latestCsv = asString.Substring(CsvSnapshotPrefix.Length);
+                return;
+            }
+
             HandleWebMessage(e.WebMessageAsJson);
         }
 
@@ -294,13 +320,12 @@ namespace ClarionCsvEditor
                         break;
 
                     case "saveRequested":
-                        _ = SaveFileAsync();
+                        SaveInteractive();
                         break;
 
                     case "darkModeChanged":
                         var isDark = ExtractJsonValue(message, "isDark");
                         _isDarkMode = string.Equals(isDark, "true", StringComparison.OrdinalIgnoreCase);
-                        menuDarkMode.Checked = _isDarkMode;
                         _settingsService.Set("DarkMode", _isDarkMode ? "true" : "false");
                         break;
                 }
@@ -308,21 +333,6 @@ namespace ClarionCsvEditor
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("[CsvEditor] HandleWebMessage error: " + ex.Message);
-            }
-        }
-
-        private async Task<string> GetCsvFromGridAsync()
-        {
-            if (!_isWebViewReady) return null;
-            try
-            {
-                var result = await webView.ExecuteScriptAsync("getCsv()");
-                return DecodeJsonString(result);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine("[CsvEditor] GetCsvFromGridAsync error: " + ex.Message);
-                return null;
             }
         }
 
@@ -346,23 +356,6 @@ namespace ClarionCsvEditor
             {
                 System.Diagnostics.Debug.WriteLine("[CsvEditor] InvokeScript error: " + ex.Message);
             }
-        }
-
-        #endregion
-
-        #region Menu handlers
-
-        private void menuOpen_Click(object sender, EventArgs e) => OpenFileDialogAndLoad();
-
-        private void menuSave_Click(object sender, EventArgs e) => _ = SaveFileAsync();
-
-        private void menuSaveAs_Click(object sender, EventArgs e) => _ = SaveFileAsAsync();
-
-        private void menuDarkMode_Click(object sender, EventArgs e)
-        {
-            _isDarkMode = menuDarkMode.Checked;
-            _settingsService.Set("DarkMode", _isDarkMode ? "true" : "false");
-            InvokeScript("setDarkMode", _isDarkMode ? "true" : "false");
         }
 
         #endregion
@@ -413,73 +406,6 @@ namespace ClarionCsvEditor
             int valEnd = i;
             while (valEnd < json.Length && json[valEnd] != ',' && json[valEnd] != '}') valEnd++;
             return json.Substring(i, valEnd - i).Trim();
-        }
-
-        /// <summary>
-        /// Decodes a JSON-encoded string returned by WebView2.ExecuteScriptAsync.
-        /// Chromium escapes the result (e.g. &lt; becomes <, backslashes are
-        /// doubled, non-ASCII becomes \uXXXX), so a full JSON string decode is required
-        /// to avoid corrupting saved CSV content.
-        /// </summary>
-        private static string DecodeJsonString(string json)
-        {
-            if (string.IsNullOrEmpty(json)) return json;
-            if (json == "null") return null;
-            if (json.Length < 2 || json[0] != '"' || json[json.Length - 1] != '"')
-                return json;
-
-            var sb = new System.Text.StringBuilder(json.Length - 2);
-            int i = 1;
-            int end = json.Length - 1;
-            while (i < end)
-            {
-                char c = json[i];
-                if (c != '\\')
-                {
-                    sb.Append(c);
-                    i++;
-                    continue;
-                }
-                if (i + 1 >= end)
-                {
-                    sb.Append(c);
-                    i++;
-                    continue;
-                }
-                char esc = json[i + 1];
-                switch (esc)
-                {
-                    case '"': sb.Append('"'); i += 2; break;
-                    case '\\': sb.Append('\\'); i += 2; break;
-                    case '/': sb.Append('/'); i += 2; break;
-                    case 'b': sb.Append('\b'); i += 2; break;
-                    case 'f': sb.Append('\f'); i += 2; break;
-                    case 'n': sb.Append('\n'); i += 2; break;
-                    case 'r': sb.Append('\r'); i += 2; break;
-                    case 't': sb.Append('\t'); i += 2; break;
-                    case 'u':
-                        if (i + 6 <= end &&
-                            int.TryParse(json.Substring(i + 2, 4),
-                                System.Globalization.NumberStyles.HexNumber,
-                                System.Globalization.CultureInfo.InvariantCulture,
-                                out int codeUnit))
-                        {
-                            sb.Append((char)codeUnit);
-                            i += 6;
-                        }
-                        else
-                        {
-                            sb.Append(esc);
-                            i += 2;
-                        }
-                        break;
-                    default:
-                        sb.Append(esc);
-                        i += 2;
-                        break;
-                }
-            }
-            return sb.ToString();
         }
 
         #endregion

@@ -6,9 +6,10 @@ using ICSharpCode.SharpDevelop.Gui;
 namespace ClarionCsvEditor
 {
     /// <summary>
-    /// ViewContent for the CSV Editor that allows docking in the main document area,
-    /// so the editor can open as a main window (like source files) rather than only
-    /// as a tool pad.
+    /// ViewContent for the CSV Editor — a first-class IDE document. It participates
+    /// in the native File menu: File &gt; Open routes here via the display binding,
+    /// and File &gt; Save / Save As call Save(string). The dirty '*' and close
+    /// prompts are driven by IsDirty.
     /// </summary>
     public class CsvEditorViewContent : AbstractViewContent
     {
@@ -20,6 +21,9 @@ namespace ClarionCsvEditor
         {
             _control = new CsvEditorControl();
             _control.DirtyChanged += (s, e) => IsDirty = _control.IsDirty;
+            // A Save As driven from inside the editor (toolbar) can change the path;
+            // mirror it onto the tab.
+            _control.FileNameChanged += newPath => FileName = newPath;
             TitleName = "CSV Editor";
         }
 
@@ -70,16 +74,19 @@ namespace ClarionCsvEditor
             OnFileNameChanged(EventArgs.Empty);
         }
 
+        /// <summary>
+        /// Called by the IDE's File &gt; Save and File &gt; Save As (the latter with a
+        /// new path). Writes the current grid content and updates the tab to match.
+        /// </summary>
         public override void Save(string fileName)
         {
-            if (!string.IsNullOrEmpty(fileName))
-            {
-                _control?.SaveFile();
-                _fileName = fileName;
-                TitleName = TitleFor(fileName);
-                IsDirty = false;
-                OnFileNameChanged(EventArgs.Empty);
-            }
+            if (string.IsNullOrEmpty(fileName)) return;
+
+            _control?.SaveToFile(fileName);   // throws on I/O error -> IDE reports it
+            _fileName = fileName;
+            TitleName = TitleFor(fileName);
+            IsDirty = false;
+            OnFileNameChanged(EventArgs.Empty);
         }
 
         public override void Dispose()

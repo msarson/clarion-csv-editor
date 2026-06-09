@@ -29,12 +29,24 @@ let hasHeader = true;      // see "Header mode" above
 let suppressDirty = false; // true while we programmatically (re)load data
 let dirty = false;         // true when there are unsaved edits
 
+const CSV_SNAPSHOT_PREFIX = "CSV:";
+
 function post(payload) {
     // Pass the object directly. WebView2 serialises it to JSON for the host's
     // WebMessageAsJson. Calling JSON.stringify here would double-encode it into
     // an escaped string literal, which the host-side parser can't read.
     if (window.chrome && window.chrome.webview) {
         window.chrome.webview.postMessage(payload);
+    }
+}
+
+// Push the current grid as CSV to the host over the raw-string channel, so the
+// host always holds the latest content and can save synchronously. Sent as a
+// plain string (not JSON) to avoid escaping a large payload.
+function pushSnapshot() {
+    if (!table) return;
+    if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(CSV_SNAPSHOT_PREFIX + getCsv());
     }
 }
 
@@ -52,6 +64,7 @@ function markDirty() {
     if (suppressDirty) return;
     if (!dirty) setDirty(true);
     post({ type: "contentChanged" });
+    pushSnapshot();
 }
 
 function setStatus(text) {
@@ -179,12 +192,24 @@ function loadCsv(text, fileName, delim) {
 
     const rowCount = buildFrom(rows);
     setDirty(false);
+    pushSnapshot(); // seed the host cache with the loaded (clean) content
     setStatusForFile(fileName, rowCount);
 }
 
+// Called by the host on load to apply the persisted preference. `on` arrives as
+// the string "true"/"false" from C#, or a bool from the in-page toggle.
 function setDarkMode(on) {
     const enabled = (on === true || on === "true");
     document.body.classList.toggle("dark-mode", enabled);
+    const btn = document.getElementById("darkBtn");
+    if (btn) btn.classList.toggle("active", enabled);
+}
+
+// In-page dark-mode toggle. Flips the theme and tells the host to persist it.
+function toggleDark() {
+    const enabled = !document.body.classList.contains("dark-mode");
+    setDarkMode(enabled);
+    post({ type: "darkModeChanged", isDark: enabled ? "true" : "false" });
 }
 
 function onFileSaved(fileName) {
@@ -218,6 +243,7 @@ function toggleHeader() {
     const full = hasHeader ? [headers.slice(), ...data] : data;
     hasHeader = want;
     const rowCount = buildFrom(full);
+    pushSnapshot(); // representation changed; keep the host cache in sync
     setStatusForFile(lastFileName || "(untitled)", rowCount);
 }
 

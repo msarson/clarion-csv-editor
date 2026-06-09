@@ -9,12 +9,15 @@ inside a WebView2 control, instead of the default plain-text editor.
 
 ## Features (v0.1.0)
 
-- Registers as the handler for `.csv` and `.tsv` files (opens as a document tab).
-- Also available as a dockable pad (**View → Tools → CSV Editor**, `Ctrl+Alt+C`)
-  and a window (**View → Tools → CSV Editor (Window)**).
+- Registers as the handler for `.csv` and `.tsv` files; each file opens in its
+  own editor document tab (titled with the file name).
+- **Integrates with the IDE's native File menu** — **File → Open** routes here,
+  and **File → Save** / **Save As** save the grid. The unsaved `*` marker and
+  the close-without-saving prompt work like any other editor.
 - Editable cells, editable column headers, add/delete rows, add columns.
-- Save (`Ctrl+S`) / Save As, with the host owning the file on disk.
-- Dark mode, persisted across sessions.
+- Header-row handling for files with or without a header row (auto-detected,
+  with a toolbar toggle).
+- In-editor dark mode toggle, persisted across sessions.
 - Fully offline — Tabulator and Papa Parse are bundled locally; no CDN.
 
 ## How it works
@@ -35,11 +38,18 @@ communicate over WebView2 web messages:
 
 - **C# → JS**: `ExecuteScriptAsync("loadCsv(text, name, delimiter)")`,
   `setDarkMode(...)`, `onFileSaved(...)`
-- **JS → C#**: `window.chrome.webview.postMessage({ type: "saveRequested" | "contentChanged" | "darkModeChanged" | "ready" })`
+- **JS → C# (object)**: `postMessage({ type: "ready" | "contentChanged" | "saveRequested" | "darkModeChanged", ... })`
+- **JS → C# (string)**: `postMessage("CSV:" + getCsv())` — the current grid
+  serialised back to CSV (via Papa Parse `unparse`).
 
-On save, the host calls `getCsv()` in the page, decodes the JSON-escaped result
-(`DecodeJsonString`), and writes it to disk. Re-serialisation is done with Papa
-Parse's `unparse`, so quoting/delimiters are handled correctly.
+### Saving is synchronous by design
+
+The IDE's `File > Save` calls `ViewContent.Save(string)` **synchronously**, and
+blocking on WebView2's async `ExecuteScriptAsync` to pull content would deadlock
+the UI thread. So instead the page **pushes** a CSV snapshot to the host on load
+and after every change (the `"CSV:"` string message above). `Save` just writes
+that cached snapshot — no round-trip, no deadlock. The snapshot travels as a raw
+string rather than inside a JSON object to avoid escaping a large payload.
 
 ## Building
 
