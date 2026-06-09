@@ -13,6 +13,10 @@
         <button onclick="addRow()" title="Add a row below the selection">+ Row</button>
         <button onclick="deleteSelectedRows()" title="Delete selected rows">- Row</button>
         <button onclick="addColumn()" title="Add a column">+ Col</button>
+        <label class="toggle" title="Treat the first row as column headers">
+            <input type="checkbox" id="headerToggle" checked onchange="toggleHeader()">
+            First row is header
+        </label>
         <span class="spacer"></span>
         <button id="saveBtn" onclick="requestSave()" title="Save (Ctrl+S)" disabled>Save</button>
         <span class="status" id="status">No file loaded</span>

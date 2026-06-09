@@ -7,14 +7,25 @@
  *   JS -> C# : post({ type: "ready" | "contentChanged" | "saveRequested"
  *                          | "darkModeChanged", ... })
  *
- * Header model: the first CSV row is treated as the header row. Columns use
- * stable internal field ids (c0, c1, ...) so duplicate or empty header text
- * never collides. Header text is editable in-place (Tabulator editableTitle).
+ * Column model: columns use stable internal field ids (c0, c1, ...) so duplicate
+ * or empty header text never collides.
+ *
+ * Header mode (hasHeader):
+ *   - on  : row 1 of the file is the column header; its text is the (editable)
+ *           column titles, and data starts at row 2.
+ *   - off : the file has no header row; every row is data and columns get
+ *           generic, non-editable captions (Column 1..N).
+ * The mode is auto-detected on load (numeric first row => no header) and can be
+ * flipped with the toolbar toggle. Flipping re-interprets the rows already in
+ * the grid (promote/demote the first row) without re-reading the file, and
+ * getCsv() only emits a header line when the mode is on, so a round-trip
+ * reproduces the original file regardless of the toggle.
  */
 
 let table = null;
 let headers = [];          // display titles, index-aligned with field ids c0..cN
 let delimiter = ",";
+let hasHeader = true;      // see "Header mode" above
 let suppressDirty = false; // true while we programmatically (re)load data
 let dirty = false;         // true when there are unsaved edits
 
@@ -28,6 +39,8 @@ function post(payload) {
 }
 
 function fieldId(i) { return "c" + i; }
+
+function genericName(i) { return "Column " + (i + 1); }
 
 function setDirty(value) {
     dirty = value;
@@ -50,7 +63,7 @@ function buildColumns() {
         title: title,
         field: fieldId(i),
         editor: "input",
-        editableTitle: true,
+        editableTitle: hasHeader, // generic captions aren't real data; keep them read-only
         headerSort: false,
         resizable: true,
         widthGrow: 1,
@@ -73,6 +86,7 @@ function ensureTable() {
 
     table.on("cellEdited", markDirty);
     table.on("columnTitleChanged", function (column) {
+        if (!hasHeader) return; // captions are read-only in headerless mode
         const field = column.getField();
         const idx = parseInt(field.substring(1), 10);
         if (!isNaN(idx)) headers[idx] = column.getDefinition().title;
@@ -80,10 +94,77 @@ function ensureTable() {
     });
 }
 
+/* ---- Header-mode helpers ---- */
+
+// A first row that contains a purely-numeric cell is almost certainly data,
+// not a header. Used only to pick the initial toggle position on load.
+function firstRowLooksLikeHeader(rows) {
+    if (rows.length === 0) return true;
+    for (const cell of rows[0]) {
+        if (cell !== null && cell !== "" && !isNaN(cell) && isFinite(cell)) return false;
+    }
+    return true;
+}
+
+// Current grid contents as a plain array-of-arrays, header row excluded
+// (the header lives in `headers`, not in the row data).
+function currentDataMatrix() {
+    return table.getData().map(row => headers.map((_, c) => {
+        const v = row[fieldId(c)];
+        return v == null ? "" : v;
+    }));
+}
+
+// Rebuild the grid from a full matrix (array-of-arrays). Splits the matrix into
+// headers + data according to the current `hasHeader`. Does not touch dirty
+// state — callers decide that.
+function buildFrom(rows) {
+    let colCount = 1;
+    for (const r of rows) colCount = Math.max(colCount, r.length);
+
+    let dataRows;
+    if (hasHeader) {
+        const hr = rows.length > 0 ? rows[0] : [];
+        headers = [];
+        for (let i = 0; i < colCount; i++) {
+            headers.push(hr[i] && hr[i].length ? hr[i] : genericName(i));
+        }
+        dataRows = rows.slice(1);
+    } else {
+        headers = [];
+        for (let i = 0; i < colCount; i++) headers.push(genericName(i));
+        dataRows = rows.slice(0);
+    }
+
+    const data = dataRows.map(row => {
+        const obj = {};
+        for (let c = 0; c < colCount; c++) obj[fieldId(c)] = c < row.length ? row[c] : "";
+        return obj;
+    });
+
+    suppressDirty = true;
+    table.setColumns(buildColumns());
+    table.setData(data).then(() => { suppressDirty = false; });
+    return data.length;
+}
+
+function syncHeaderToggle() {
+    const cb = document.getElementById("headerToggle");
+    if (cb) cb.checked = hasHeader;
+}
+
+function setStatusForFile(fileName, rowCount) {
+    const mode = hasHeader ? "" : "  (no header)";
+    setStatus(fileName + "  —  " + rowCount + " rows × " + headers.length + " cols" + mode);
+}
+
+let lastFileName = "";
+
 /* ---- C# -> JS entry points ---- */
 
 function loadCsv(text, fileName, delim) {
     delimiter = delim || ",";
+    lastFileName = fileName;
     ensureTable();
 
     const parsed = Papa.parse(text, {
@@ -93,27 +174,12 @@ function loadCsv(text, fileName, delim) {
     });
     const rows = parsed.data || [];
 
-    // First row = headers. Normalise blanks so every column has a usable title.
-    const headerRow = rows.length > 0 ? rows[0] : [];
-    headers = headerRow.map((h, i) => (h && h.length ? h : "Column " + (i + 1)));
-    if (headers.length === 0) headers = ["Column 1"];
+    hasHeader = firstRowLooksLikeHeader(rows);
+    syncHeaderToggle();
 
-    const data = [];
-    for (let r = 1; r < rows.length; r++) {
-        const row = rows[r];
-        const obj = {};
-        for (let c = 0; c < headers.length; c++) {
-            obj[fieldId(c)] = c < row.length ? row[c] : "";
-        }
-        data.push(obj);
-    }
-
-    suppressDirty = true;
-    table.setColumns(buildColumns());
-    table.setData(data).then(() => { suppressDirty = false; });
+    const rowCount = buildFrom(rows);
     setDirty(false);
-
-    setStatus(fileName + "  —  " + data.length + " rows × " + headers.length + " cols");
+    setStatusForFile(fileName, rowCount);
 }
 
 function setDarkMode(on) {
@@ -128,21 +194,32 @@ function onFileSaved(fileName) {
 
 /* ---- JS -> C# returning data ---- */
 
-// Returns the full CSV text (header row + data) for the C# host to write to disk.
+// Returns the full CSV text for the C# host to write to disk. A header line is
+// emitted only in header mode, so the output matches the original file.
 function getCsv() {
     if (!table) return "";
-    const data = table.getData();
-    const matrix = [headers.slice()];
-    for (const row of data) {
-        matrix.push(headers.map((_, c) => {
-            const v = row[fieldId(c)];
-            return v == null ? "" : v;
-        }));
-    }
+    const body = currentDataMatrix();
+    const matrix = hasHeader ? [headers.slice(), ...body] : body;
     return Papa.unparse(matrix, { delimiter: delimiter });
 }
 
 /* ---- Toolbar actions ---- */
+
+// Flip header mode, re-interpreting the rows already in the grid. Turning the
+// header off pushes the current header text down as a new first data row;
+// turning it on promotes the first data row back up to the header. Lossless,
+// so it preserves dirty state rather than resetting it.
+function toggleHeader() {
+    const cb = document.getElementById("headerToggle");
+    const want = cb ? cb.checked : !hasHeader;
+    if (want === hasHeader) return;
+
+    const data = currentDataMatrix();
+    const full = hasHeader ? [headers.slice(), ...data] : data;
+    hasHeader = want;
+    const rowCount = buildFrom(full);
+    setStatusForFile(lastFileName || "(untitled)", rowCount);
+}
 
 function addRow() {
     if (!table) return;
@@ -168,12 +245,12 @@ function deleteSelectedRows() {
 function addColumn() {
     if (!table) return;
     const i = headers.length;
-    headers.push("Column " + (i + 1));
+    headers.push(genericName(i));
     table.addColumn({
         title: headers[i],
         field: fieldId(i),
         editor: "input",
-        editableTitle: true,
+        editableTitle: hasHeader,
         headerSort: false,
         resizable: true,
         widthGrow: 1,

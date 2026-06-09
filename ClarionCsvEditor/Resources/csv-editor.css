@@ -43,6 +43,21 @@ body {
     background: #fafafa;
 }
 
+.toolbar .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #444;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.toolbar .toggle input {
+    cursor: pointer;
+}
+
 .toolbar .spacer {
     flex: 1 1 auto;
 }
@@ -90,6 +105,10 @@ body.dark-mode .toolbar button:disabled:hover {
 
 body.dark-mode .toolbar .status {
     color: #aaa;
+}
+
+body.dark-mode .toolbar .toggle {
+    color: #ccc;
 }
 
 /* ---- Tabulator dark overrides ----
