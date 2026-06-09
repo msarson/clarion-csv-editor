@@ -36,6 +36,13 @@ body {
     background: #e8e8e8;
 }
 
+.toolbar button:disabled,
+.toolbar button:disabled:hover {
+    opacity: 0.45;
+    cursor: default;
+    background: #fafafa;
+}
+
 .toolbar .spacer {
     flex: 1 1 auto;
 }
@@ -73,6 +80,12 @@ body.dark-mode .toolbar button {
 
 body.dark-mode .toolbar button:hover {
     background: #404040;
+}
+
+body.dark-mode .toolbar button:disabled,
+body.dark-mode .toolbar button:disabled:hover {
+    opacity: 0.4;
+    background: #333;
 }
 
 body.dark-mode .toolbar .status {

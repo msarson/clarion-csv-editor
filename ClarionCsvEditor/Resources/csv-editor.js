@@ -16,17 +16,29 @@ let table = null;
 let headers = [];          // display titles, index-aligned with field ids c0..cN
 let delimiter = ",";
 let suppressDirty = false; // true while we programmatically (re)load data
+let dirty = false;         // true when there are unsaved edits
 
 function post(payload) {
+    // Pass the object directly. WebView2 serialises it to JSON for the host's
+    // WebMessageAsJson. Calling JSON.stringify here would double-encode it into
+    // an escaped string literal, which the host-side parser can't read.
     if (window.chrome && window.chrome.webview) {
-        window.chrome.webview.postMessage(JSON.stringify(payload));
+        window.chrome.webview.postMessage(payload);
     }
 }
 
 function fieldId(i) { return "c" + i; }
 
+function setDirty(value) {
+    dirty = value;
+    const btn = document.getElementById("saveBtn");
+    if (btn) btn.disabled = !value;
+}
+
 function markDirty() {
-    if (!suppressDirty) post({ type: "contentChanged" });
+    if (suppressDirty) return;
+    if (!dirty) setDirty(true);
+    post({ type: "contentChanged" });
 }
 
 function setStatus(text) {
@@ -96,6 +108,7 @@ function loadCsv(text, fileName, delim) {
     suppressDirty = true;
     table.setColumns(buildColumns());
     table.setData(data).then(() => { suppressDirty = false; });
+    setDirty(false);
 
     setStatus(fileName + "  —  " + data.length + " rows × " + headers.length + " cols");
 }
@@ -106,6 +119,7 @@ function setDarkMode(on) {
 }
 
 function onFileSaved(fileName) {
+    setDirty(false);
     setStatus("Saved  " + fileName);
 }
 
@@ -165,6 +179,7 @@ function addColumn() {
 }
 
 function requestSave() {
+    if (!dirty) return;
     post({ type: "saveRequested" });
 }
 
