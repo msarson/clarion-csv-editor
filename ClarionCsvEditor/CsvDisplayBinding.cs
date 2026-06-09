@@ -7,9 +7,9 @@ namespace ClarionCsvEditor
 {
     /// <summary>
     /// Registers the CSV Editor as the handler for .csv / .tsv files.
-    /// When a user opens such a file in the IDE, this binding routes it into
-    /// the existing CSV Editor instance (as a new tab) rather than creating a
-    /// separate editor per file.
+    /// Each distinct file opens in its own editor document tab. If the same file
+    /// is already open, its existing tab is reused (and activated) instead of
+    /// creating a duplicate.
     /// </summary>
     public class CsvDisplayBinding : IDisplayBinding
     {
@@ -21,17 +21,16 @@ namespace ClarionCsvEditor
 
         public IViewContent CreateContentForFile(string fileName)
         {
-            // Reuse the existing CSV Editor instance if one is already open
+            // If this exact file is already open, hand back that tab so the IDE
+            // activates it rather than opening a second copy.
             var existing = WorkbenchSingleton.Workbench.ViewContentCollection
                 .OfType<CsvEditorViewContent>()
-                .FirstOrDefault();
+                .FirstOrDefault(vc => string.Equals(vc.FileName, fileName, StringComparison.OrdinalIgnoreCase));
 
             if (existing != null)
-            {
-                existing.Load(fileName);
                 return existing;
-            }
 
+            // Otherwise open the file in a new editor tab of its own.
             var content = new CsvEditorViewContent();
             content.Load(fileName);
             return content;
