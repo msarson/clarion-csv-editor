@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta charset="utf-8">
+    <title>CSV Editor</title>
+
+    <!-- INJECT_TABULATOR_CSS -->
+    <link rel="stylesheet" href="csv-editor.css">
+</head>
+<body>
+    <div class="toolbar">
+        <button onclick="addRow()" title="Add a row below the selection">+ Row</button>
+        <button onclick="deleteSelectedRows()" title="Delete selected rows">- Row</button>
+        <button onclick="addColumn()" title="Add a column">+ Col</button>
+        <span class="spacer"></span>
+        <button onclick="requestSave()" title="Save (Ctrl+S)">Save</button>
+        <span class="status" id="status">No file loaded</span>
+    </div>
+
+    <div id="grid"></div>
+
+    <!-- INJECT_TABULATOR_JS -->
+    <!-- INJECT_PAPAPARSE_JS -->
+    <script src="csv-editor.js"></script>
+</body>
+</html>

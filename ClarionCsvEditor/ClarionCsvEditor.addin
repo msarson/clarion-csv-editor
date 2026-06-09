@@ -1,0 +1,28 @@
+<AddIn name="CSV Editor" author="Mark Sarson" description="CSV file viewer and editor for Clarion IDE (WebView2 + Tabulator)">
+  <Manifest>
+    <Identity name="ClarionCsvEditor" version="0.1.0"/>
+  </Manifest>
+  <Runtime>
+    <Import assembly="ClarionCsvEditor.dll"/>
+  </Runtime>
+  <Path name="/Workspace/Autostart">
+    <Class id="CsvEditorRegisterIcons" class="ClarionCsvEditor.RegisterIconsCommand"/>
+  </Path>
+  <Path name="/SharpDevelop/Workbench/DisplayBindings">
+    <DisplayBinding id="CsvDisplayBinding"
+                    insertbefore="Text"
+                    class="ClarionCsvEditor.CsvDisplayBinding"
+                    fileNamePattern=".*\.(csv|tsv)$"
+                    type="Primary"/>
+  </Path>
+  <Path name="/SharpDevelop/Workbench/Pads">
+    <Pad id="CsvEditor" category="Tools" title="CSV Editor (Pad)"
+         icon="ClarionCsvEditor.CsvEditorIcon" shortcut="Control|Alt|C"
+         class="ClarionCsvEditor.CsvEditorPad"/>
+  </Path>
+  <Path name="/SharpDevelop/Workbench/MainMenu/View/Tools">
+    <MenuItem id="ShowCsvEditorWindow" label="CSV Editor (Window)"
+              icon="ClarionCsvEditor.CsvEditorIcon"
+              class="ClarionCsvEditor.ShowCsvEditorWindowCommand"/>
+  </Path>
+</AddIn>
