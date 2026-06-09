@@ -23,6 +23,12 @@ namespace ClarionCsvEditor
             TitleName = "CSV Editor";
         }
 
+        /// <summary>Tab title: the open file's name, or a default when nothing is loaded.</summary>
+        private static string TitleFor(string fileName)
+        {
+            return string.IsNullOrEmpty(fileName) ? "CSV Editor" : Path.GetFileName(fileName);
+        }
+
         public override Control Control
         {
             get { return _control; }
@@ -49,7 +55,7 @@ namespace ClarionCsvEditor
                 if (_fileName != value)
                 {
                     _fileName = value;
-                    TitleName = "CSV Editor";
+                    TitleName = TitleFor(value);
                     OnFileNameChanged(EventArgs.Empty);
                 }
             }
@@ -58,7 +64,7 @@ namespace ClarionCsvEditor
         public override void Load(string fileName)
         {
             _fileName = fileName;
-            TitleName = "CSV Editor";
+            TitleName = TitleFor(fileName);
             if (_control != null && File.Exists(fileName))
                 _control.LoadFile(fileName);
             OnFileNameChanged(EventArgs.Empty);
@@ -70,7 +76,7 @@ namespace ClarionCsvEditor
             {
                 _control?.SaveFile();
                 _fileName = fileName;
-                TitleName = "CSV Editor";
+                TitleName = TitleFor(fileName);
                 IsDirty = false;
                 OnFileNameChanged(EventArgs.Empty);
             }
