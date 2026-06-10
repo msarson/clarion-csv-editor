@@ -16,7 +16,7 @@ namespace ClarionCsvEditor
     ///
     /// Communication over WebView2 messages:
     ///   C# -> JS : ExecuteScriptAsync("loadCsv(...)"), "setDarkMode(...)", "onFileSaved(...)"
-    ///   JS -> C# (object) : { type: "ready" | "contentChanged" | "darkModeChanged" }
+    ///   JS -> C# (object) : { type: "ready" | "contentChanged" | "saveRequested" | "darkModeChanged" }
     ///   JS -> C# (string) : "CSV:" + csvText  — the current grid serialised as CSV.
     ///
     /// The CSV snapshot is pushed on load and after every change so the host
@@ -104,10 +104,11 @@ namespace ClarionCsvEditor
 
                 webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
 
-                // Let the IDE own Ctrl+S (File > Save). Disabling the browser
-                // accelerator keys stops WebView2 from treating Ctrl+S as its own
-                // "save page" command, so the keystroke is forwarded to the host
-                // and the IDE's menu shortcut fires even when the grid has focus.
+                // Suppress WebView2's own browser shortcuts (Ctrl+S "save page",
+                // Ctrl+P, F5, etc.) inside the embedded view. Ctrl+S is instead
+                // handled by the page's keydown listener, which forwards a
+                // saveRequested message to the host (WebView2 does not forward
+                // accelerator keys to the IDE's menu shortcut when it has focus).
                 webView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
 
                 webView.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
@@ -281,6 +282,49 @@ namespace ClarionCsvEditor
             return fallback;
         }
 
+        /// <summary>
+        /// Pulls the current CSV from the grid asynchronously. Used by the page-initiated
+        /// save (Ctrl+S in the grid arrives as the saveRequested message). Because that
+        /// runs <em>inside</em> a WebView2 callback, awaiting lets the callback return so
+        /// WebView2 can dispatch getCsv()'s result — the synchronous <see cref="GetCsvForSave"/>
+        /// pump would deadlock here. Falls back to the cached snapshot if the pull yields nothing.
+        /// </summary>
+        private async Task<string> PullCsvAsync()
+        {
+            string fallback = _latestCsv ?? "";
+            if (!_isWebViewReady) return fallback;
+            try
+            {
+                var decoded = DecodeJsonString(await webView.ExecuteScriptAsync("getCsv()"));
+                if (decoded != null)
+                {
+                    _latestCsv = decoded;
+                    return decoded;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[CsvEditor] PullCsvAsync error: " + ex.Message);
+            }
+            return fallback;
+        }
+
+        /// <summary>
+        /// Save requested from the page (Ctrl+S inside the grid). The CSV editor only ever
+        /// opens existing files, so the path is always known — no Save As prompt is needed.
+        /// Async to avoid the WebView2 reentrancy deadlock (see <see cref="PullCsvAsync"/>).
+        /// </summary>
+        private async void SaveFromPage()
+        {
+            if (string.IsNullOrEmpty(_currentFilePath)) return;
+            try { WriteCsv(_currentFilePath, await PullCsvAsync()); }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not save:\n" + ex.Message, "CSV Editor",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
         #endregion
 
         #region File loading
@@ -360,6 +404,10 @@ namespace ClarionCsvEditor
 
                     case "contentChanged":
                         IsDirty = true;
+                        break;
+
+                    case "saveRequested":
+                        SaveFromPage();
                         break;
 
                     case "darkModeChanged":

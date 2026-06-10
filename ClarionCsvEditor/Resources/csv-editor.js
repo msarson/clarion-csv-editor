@@ -4,7 +4,7 @@
  * Owns the editable grid. The C# host owns the file on disk. Contract:
  *   C# -> JS : loadCsv(text, fileName, delimiter), setDarkMode("true"|"false"),
  *              onFileSaved(fileName)
- *   JS -> C# : post({ type: "ready" | "contentChanged" | "darkModeChanged", ... })
+ *   JS -> C# : post({ type: "ready" | "contentChanged" | "saveRequested" | "darkModeChanged", ... })
  *
  * Column model: columns use stable internal field ids (c0, c1, ...) so duplicate
  * or empty header text never collides.
@@ -289,11 +289,18 @@ function addColumn() {
 
 /* ---- Wiring ---- */
 
-// NOTE: saving is owned entirely by the IDE (File > Save / Ctrl+S). The page does
-// not initiate saves and has no Save button — a page-level Ctrl+S keydown listener
-// would preventDefault and swallow the key before the IDE accelerator could fire.
-// On save the host pulls the grid via getCsv(); markDirty() also pushes a snapshot
-// so the host always holds current content.
+// Ctrl+S saves. WebView2 captures keyboard input while the grid has focus and does
+// NOT forward the keystroke to the IDE's File > Save accelerator, so the page has to
+// handle it: commit any in-flight cell edit (blur fires cellEdited -> the host's CSV
+// snapshot updates), then ask the host to save. The host pulls getCsv() to write.
+document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        const el = document.activeElement;
+        if (el && typeof el.blur === "function") el.blur();
+        post({ type: "saveRequested" });
+    }
+});
 
 ensureTable();
 post({ type: "ready" });
