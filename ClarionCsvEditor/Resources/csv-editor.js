@@ -684,18 +684,43 @@ function replaceAll() {
     });
 }
 
+// Show the find/replace panel (overlaid top-right of the grid) and focus the find
+// or replace box. Ctrl+F / Ctrl+H / the toolbar Find button call this.
+function openFind(focusReplace) {
+    const panel = document.getElementById("findPanel");
+    if (panel) panel.hidden = false;
+    const el = document.getElementById(focusReplace ? "replace" : "search");
+    if (el) { el.focus(); el.select(); }
+}
+
+// Hide the panel and drop the find filter so rows hidden by Find return.
+function closeFind() {
+    const panel = document.getElementById("findPanel");
+    if (!panel || panel.hidden) return;
+    panel.hidden = true;
+    document.getElementById("search").value = "";
+    applySearch("");
+}
+
 /* ---- Wiring ---- */
 
 // Ctrl+S saves. WebView2 captures keyboard input while the grid has focus and does
 // NOT forward the keystroke to the IDE's File > Save accelerator, so the page has to
 // handle it by asking the host to save. The host reads commitAndGetCsv(), which
 // commits any in-flight cell edit before serialising, so nothing typed is lost.
+// Ctrl+F / Ctrl+H open the find/replace panel; Esc closes it.
 document.addEventListener("keydown", function (e) {
     const mod = e.ctrlKey || e.metaKey;
-    if (!mod) return;
     const k = e.key.toLowerCase();
 
+    if (e.key === "Escape" && !document.getElementById("findPanel").hidden) {
+        e.preventDefault(); closeFind(); return;
+    }
+    if (!mod) return;
+
     if (k === "s") { e.preventDefault(); post({ type: "saveRequested" }); return; }
+    if (k === "f") { e.preventDefault(); openFind(false); return; }
+    if (k === "h") { e.preventDefault(); openFind(true); return; }
 
     // While a cell/title editor is open, leave undo/redo to the browser so it acts
     // on the text being typed rather than the whole grid.

@@ -14,6 +14,7 @@ test("sort is view-only — saved order is unchanged", async ({ page }) => {
 
 test("search hides rows but a save still writes them all", async ({ page }) => {
     await openGrid(page, "A\r\nfoo\r\nbar\r\nbaz\r\n");
+    await page.locator("#findBtn").click();
     await page.fill("#search", "foo");
     await page.waitForFunction(() => table.getDataCount("active") === 1);
     expect(await csvOut(page)).toBe("A\r\nfoo\r\nbar\r\nbaz\r\n");

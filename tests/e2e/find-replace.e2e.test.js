@@ -1,7 +1,13 @@
 const { test, expect } = require("@playwright/test");
 const { openGrid, csvOut, dirtyNow } = require("./helpers");
 
+async function openFind(page) {
+    await page.locator("#findBtn").click();
+    await page.locator("#findPanel").waitFor({ state: "visible" });
+}
+
 async function replaceAll(page, find, repl, matchCase = false) {
+    await openFind(page);
     await page.fill("#search", find);
     await page.fill("#replace", repl);
     if (matchCase) await page.check("#matchCase");
@@ -25,10 +31,20 @@ test("Replace All respects match-case", async ({ page }) => {
 
 test("Replace All with an empty Find does nothing", async ({ page }) => {
     await openGrid(page, "A\r\nfoo\r\n");
+    await openFind(page);
     await page.fill("#replace", "X");
     await page.getByRole("button", { name: "Replace All" }).click();
     expect(await csvOut(page)).toBe("A\r\nfoo\r\n");
     expect(await dirtyNow(page)).toBe(false);
+});
+
+test("Ctrl+F opens the find panel and Esc closes it", async ({ page }) => {
+    await openGrid(page, "A\r\n1\r\n");
+    await expect(page.locator("#findPanel")).toBeHidden();
+    await page.keyboard.press("Control+f");
+    await expect(page.locator("#findPanel")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#findPanel")).toBeHidden();
 });
 
 test("Replace All clears the find filter so results stay visible", async ({ page }) => {

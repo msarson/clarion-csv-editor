@@ -69,6 +69,7 @@ test("redo re-applies an undone edit", async ({ page }) => {
 
 test("clearing the search restores all rows", async ({ page }) => {
     await openGrid(page, "A\r\nfoo\r\nbar\r\n");
+    await page.locator("#findBtn").click();
     await page.fill("#search", "foo");
     await page.waitForFunction(() => table.getDataCount("active") === 1);
     await page.fill("#search", "");

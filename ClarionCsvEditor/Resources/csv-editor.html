@@ -31,21 +31,31 @@
                 <option value="|">| pipe</option>
             </select>
         </label>
-        <input type="search" id="search" class="search" placeholder="Find&#8230;"
-               oninput="applySearch(this.value)" title="Filter to rows containing this text">
-        <input type="text" id="replace" class="search" placeholder="Replace&#8230;"
-               title="Replacement text for Replace All">
-        <button onclick="replaceAll()" title="Replace all occurrences of Find with Replace">Replace All</button>
-        <label class="toggle" title="Match case for find and replace">
-            <input type="checkbox" id="matchCase" onchange="applySearch(document.getElementById('search').value)">
-            Aa
-        </label>
+        <button id="findBtn" onclick="openFind(false)" title="Find / Replace (Ctrl+F)">&#128269; Find</button>
         <span class="spacer"></span>
         <button id="darkBtn" onclick="toggleDark()" title="Toggle dark mode">🌓 Dark</button>
         <span class="status" id="status">No file loaded</span>
     </div>
 
-    <div id="grid"></div>
+    <div class="grid-wrap">
+        <div id="findPanel" class="find-panel" hidden>
+            <div class="find-row">
+                <input type="search" id="search" class="find-input" placeholder="Find&#8230;"
+                       oninput="applySearch(this.value)" title="Filter to rows containing this text">
+                <label class="toggle" title="Match case for find and replace">
+                    <input type="checkbox" id="matchCase"
+                           onchange="applySearch(document.getElementById('search').value)"> Aa
+                </label>
+                <button class="find-close" onclick="closeFind()" title="Close (Esc)">&#215;</button>
+            </div>
+            <div class="find-row">
+                <input type="text" id="replace" class="find-input" placeholder="Replace&#8230;"
+                       title="Replacement text for Replace All">
+                <button onclick="replaceAll()" title="Replace all occurrences of Find with Replace">Replace All</button>
+            </div>
+        </div>
+        <div id="grid"></div>
+    </div>
 
     <!-- INJECT_TABULATOR_JS -->
     <!-- INJECT_PAPAPARSE_JS -->

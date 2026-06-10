@@ -115,9 +115,67 @@ body {
     max-width: 40%;
 }
 
-#grid {
+.grid-wrap {
     flex: 1 1 auto;
+    position: relative;
     overflow: hidden;
+}
+
+#grid {
+    height: 100%;
+    overflow: hidden;
+}
+
+/* Find / Replace panel — overlays the top-right of the grid, like an editor's
+   find widget. Toggled via Ctrl+F / Ctrl+H / the toolbar Find button. */
+.find-panel {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    background: #f3f3f3;
+    border: 1px solid #c0c0c0;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+.find-panel[hidden] {
+    display: none;
+}
+
+.find-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.find-input {
+    flex: 1 1 auto;
+    width: 190px;
+    padding: 3px 6px;
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    font-size: 12px;
+    background: #fff;
+    color: #1e1e1e;
+}
+
+.find-close {
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    color: #666;
+    padding: 0 4px;
+}
+
+.find-close:hover {
+    color: #000;
 }
 
 /* ---- Dark mode ---- */
@@ -273,4 +331,25 @@ body.dark-mode .tabulator-menu .tabulator-menu-item.tabulator-menu-item-disabled
 
 body.dark-mode .tabulator-menu .tabulator-menu-separator {
     border-color: #3c3c3c !important;
+}
+
+/* Find / Replace panel — dark */
+body.dark-mode .find-panel {
+    background: #2d2d2d;
+    border-color: #3c3c3c;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+
+body.dark-mode .find-input {
+    background: #333;
+    border-color: #4a4a4a;
+    color: #e0e0e0;
+}
+
+body.dark-mode .find-close {
+    color: #aaa;
+}
+
+body.dark-mode .find-close:hover {
+    color: #fff;
 }
