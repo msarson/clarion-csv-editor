@@ -5,6 +5,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## v0.2.0 — 2026-06-10 — Tier 1 grid features
+
+### Added
+- Column sorting (view-only — saves preserve the file's original row order).
+- Find/search box that filters rows by any cell (hidden rows are still saved).
+- Undo / redo (`Ctrl+Z` / `Ctrl+Y`) for edits and row add/delete.
+- Spreadsheet-style cell-range selection, a row-number gutter, and whole-row /
+  whole-column selection; TSV copy/paste that round-trips with Excel.
+- Delete column (`- Col`); rename a column by double-clicking its header.
+- Delimiter auto-detection (comma / semicolon / tab / pipe) with a manual picker.
+- Front-end test suites: node unit tests, a linked-source C# test for the JSON
+  helpers, and Playwright end-to-end tests.
+
+### Changed
+- Save pulls the grid live at save time (committing any in-progress cell edit)
+  rather than relying solely on the pushed snapshot.
+- Dirty state is a comparison against the last loaded/saved content, so undoing
+  every change clears the unsaved `*`.
+- Column headers: single-click selects the column, double-click renames it
+  (previously one click went straight to editing).
+
+### Fixed
+- CSV round-trip no longer adds a phantom trailing empty row or drops the file's
+  trailing newline; original line endings are preserved.
+- `Ctrl+S` inside the grid now saves reliably (handled in the page, saved async).
+- Paste of a tab-separated row spreads across columns instead of collapsing to
+  the last value.
+- Delimiter auto-detect no longer mis-reads a 2-column tab/pipe/semicolon file as
+  a single comma column.
+
 ## v0.1.0 — 2026-06-09 — Initial scaffold
 
 ### Added

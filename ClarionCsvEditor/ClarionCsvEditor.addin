@@ -1,6 +1,6 @@
 <AddIn name="CSV Editor" author="Mark Sarson" description="CSV file viewer and editor for Clarion IDE (WebView2 + Tabulator)">
   <Manifest>
-    <Identity name="ClarionCsvEditor" version="0.1.0"/>
+    <Identity name="ClarionCsvEditor" version="0.2.0"/>
   </Manifest>
   <Runtime>
     <Import assembly="ClarionCsvEditor.dll"/>

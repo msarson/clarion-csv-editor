@@ -4,19 +4,30 @@ A CSV / TSV viewer and editor addin for the Clarion IDE. Opens `.csv` and `.tsv`
 files in an editable grid rendered with [Tabulator](https://tabulator.info/)
 inside a WebView2 control, instead of the default plain-text editor.
 
-> Status: **scaffold / v0.1.0** — builds and runs the core open → edit → save
-> loop. See [Roadmap](#roadmap) for what is intentionally not done yet.
+> Status: **v0.2.0** — full open → edit → save loop with a spreadsheet-style grid
+> (Tier 1 feature set). See [Roadmap](#roadmap) for what's next.
 
-## Features (v0.1.0)
+## Features
 
 - Registers as the handler for `.csv` and `.tsv` files; each file opens in its
   own editor document tab (titled with the file name).
 - **Integrates with the IDE's native File menu** — **File → Open** routes here,
-  and **File → Save** / **Save As** save the grid. The unsaved `*` marker and
-  the close-without-saving prompt work like any other editor.
-- Editable cells, editable column headers, add/delete rows, add columns.
-- Header-row handling for files with or without a header row (auto-detected,
-  with a toolbar toggle).
+  and **File → Save** / **Save As** (and `Ctrl+S`) save the grid. The unsaved `*`
+  marker and the close-without-saving prompt work like any other editor, and the
+  `*` clears when you undo back to the saved state.
+- **Editing**: editable cells; add / delete rows; add / delete columns; rename a
+  column by double-clicking its header.
+- **Spreadsheet-style selection & clipboard**: cell-range selection (drag,
+  Shift-click), whole-row (row-number gutter) and whole-column (header) selection,
+  and copy / paste as TSV that round-trips with Excel.
+- **Undo / redo** (`Ctrl+Z` / `Ctrl+Y`) for edits and row add/delete.
+- **Sorting** by a column's sort arrow — view-only, so a save preserves the
+  file's original row order.
+- **Find** box that filters rows by any cell; hidden rows are still saved.
+- **Delimiter** auto-detection (comma / semicolon / tab / pipe) with a manual
+  picker, plus header-row auto-detection with a toolbar toggle.
+- Faithful round-trip: original line endings, trailing newline, and necessary
+  quoting are preserved.
 - In-editor dark mode toggle, persisted across sessions.
 - Fully offline — Tabulator and Papa Parse are bundled locally; no CDN.
 
@@ -38,18 +49,21 @@ communicate over WebView2 web messages:
 
 - **C# → JS**: `ExecuteScriptAsync("loadCsv(text, name, delimiter)")`,
   `setDarkMode(...)`, `onFileSaved(...)`
-- **JS → C# (object)**: `postMessage({ type: "ready" | "contentChanged" | "saveRequested" | "darkModeChanged", ... })`
+- **JS → C# (object)**: `postMessage({ type: "ready" | "dirtyChanged" | "saveRequested" | "darkModeChanged", ... })`
 - **JS → C# (string)**: `postMessage("CSV:" + getCsv())` — the current grid
   serialised back to CSV (via Papa Parse `unparse`).
 
-### Saving is synchronous by design
+### Saving
 
-The IDE's `File > Save` calls `ViewContent.Save(string)` **synchronously**, and
-blocking on WebView2's async `ExecuteScriptAsync` to pull content would deadlock
-the UI thread. So instead the page **pushes** a CSV snapshot to the host on load
-and after every change (the `"CSV:"` string message above). `Save` just writes
-that cached snapshot — no round-trip, no deadlock. The snapshot travels as a raw
-string rather than inside a JSON object to avoid escaping a large payload.
+The IDE's `File > Save` calls `ViewContent.Save(string)` **synchronously**, while
+WebView2's `ExecuteScriptAsync` is asynchronous — blocking on it from the UI thread
+would deadlock. So the host pulls the grid as CSV at save time via
+`commitAndGetCsv()` (which first commits any in-progress cell edit); the synchronous
+menu Save pumps the message loop until the result arrives, while the in-page
+`Ctrl+S` path saves asynchronously. The page also pushes a `"CSV:"` snapshot after
+every change as a fallback (a raw string, not JSON, to avoid escaping a large
+payload). Dirty state is a comparison against the content as last loaded/saved, so
+undoing every change clears the `*`.
 
 ## Building
 
@@ -75,10 +89,24 @@ Copy the build output to `<Clarion>\accessory\addins\CsvAddin\` (the
 
 ## Roadmap
 
-- Header-row detection toggle (treat first row as data vs. header).
-- Delimiter auto-detection and a UI picker.
-- Undo/redo, find/replace, column reordering and type-aware editors.
+Tier 1 (above) is done. Next up:
+
+- Encoding awareness (UTF-8 BOM / others) and reload-on-external-change.
+- Right-click context menu, find & replace, per-column filters.
+- Numeric/date-aware display, frozen columns, column statistics.
 - Large-file streaming for multi-hundred-MB files.
+
+## Testing
+
+Three layers run without the IDE (see `tests/`):
+
+- **JS unit** — `node --test tests/grid.test.js`: parse/serialise, delimiter and
+  header detection, and dirty-state logic, exercised against the real page script.
+- **C# helpers** — `dotnet run --project tests/JsonInterop.Tests`: the JSON
+  decode/extract helpers (links the real source, no NuGet).
+- **End-to-end** — `npx playwright test`: drives the real grid in headless
+  Chromium — sort, search, undo/redo, range selection, copy/paste, add/delete row
+  & column, header rename, delimiter picker.
 
 ## Third-party
 
