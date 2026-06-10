@@ -39,7 +39,7 @@ function loadEditor() {
     // Expose the internals after the script's own declarations so the closures
     // capture the module-scoped let-bindings (table, headers, dirty, savedCsv...).
     const exposed = SOURCE + "\n;globalThis.__api = {" +
-        "loadCsv, getCsv, markDirty, markClean, changeDelimiter, firstRowLooksLikeHeader," +
+        "loadCsv, getCsv, markDirty, markClean, changeDelimiter, firstRowLooksLikeHeader, replaceInCell," +
         "state: () => ({ dirty, savedCsv, delimiter, hasHeader, colCount: headers.length, fileEol, fileEndsWithNewline })," +
         "rows: () => table.getData()," +
         "table: () => table };";
@@ -168,6 +168,27 @@ test("keeps a blank row in the middle (only the trailing artifact is dropped)", 
     await flush();
     // rows: [1,2], [blank], [3,4] — three data rows, not two.
     assert.strictEqual(api.rows().length, 3);
+});
+
+test("replaceInCell replaces case-insensitively by default, with a count", () => {
+    const { api } = loadEditor();
+    const r = api.replaceInCell("FOObar foo", "foo", "X", false);
+    assert.strictEqual(r.value, "Xbar X");
+    assert.strictEqual(r.count, 2);
+});
+
+test("replaceInCell respects match-case", () => {
+    const { api } = loadEditor();
+    const r = api.replaceInCell("foo FOO", "foo", "X", true);
+    assert.strictEqual(r.value, "X FOO");
+    assert.strictEqual(r.count, 1);
+});
+
+test("replaceInCell reports zero and is unchanged when nothing matches", () => {
+    const { api } = loadEditor();
+    const r = api.replaceInCell("abc", "z", "X", false);
+    assert.strictEqual(r.value, "abc");
+    assert.strictEqual(r.count, 0);
 });
 
 test("changing the delimiter re-parses the source", async () => {

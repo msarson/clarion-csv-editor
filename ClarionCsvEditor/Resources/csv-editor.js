@@ -602,23 +602,86 @@ function headerContextMenu() {
     ];
 }
 
-/* ---- Search ---- */
+/* ---- Find & Replace ---- */
 
-// Filter to rows where any cell contains the query (case-insensitive). Filtered-out
-// rows are still saved — currentDataMatrix() reads the full data set, not just the
-// visible rows.
+function isMatchCase() {
+    const cb = document.getElementById("matchCase");
+    return !!(cb && cb.checked);
+}
+
+// Filter to rows where any cell contains the query. Filtered-out rows are still
+// saved — currentDataMatrix() reads the full data set, not just the visible rows.
 function applySearch(q) {
     if (!table) return;
-    q = (q || "").trim().toLowerCase();
+    q = (q || "").trim();
     if (!q) { table.clearFilter(); refreshStatus(); return; }
+    const matchCase = isMatchCase();
+    const needle = matchCase ? q : q.toLowerCase();
     table.setFilter(function (data) {
         for (let c = 0; c < headers.length; c++) {
             const v = data[fieldId(c)];
-            if (String(v == null ? "" : v).toLowerCase().indexOf(q) !== -1) return true;
+            const s = v == null ? "" : String(v);
+            if ((matchCase ? s : s.toLowerCase()).indexOf(needle) !== -1) return true;
         }
         return false;
     });
     refreshStatus();
+}
+
+// Replace every occurrence of `find` with `repl` in one cell value. Literal (no
+// regex), case-sensitive when matchCase is true. Returns the new value and a count
+// of replacements made.
+function replaceInCell(s, find, repl, matchCase) {
+    if (!find) return { value: s, count: 0 };
+    if (matchCase) {
+        const parts = s.split(find);
+        return { value: parts.join(repl), count: parts.length - 1 };
+    }
+    const lower = s.toLowerCase();
+    const f = find.toLowerCase();
+    let out = "", i = 0, count = 0;
+    for (;;) {
+        const idx = lower.indexOf(f, i);
+        if (idx === -1) { out += s.slice(i); break; }
+        out += s.slice(i, idx) + repl;
+        i = idx + f.length;
+        count++;
+    }
+    return { value: out, count };
+}
+
+// Replace the Find text with the Replace text across every cell in the grid (all
+// rows, not just visible). Marks dirty, then clears the find filter so the replaced
+// rows stay on screen (otherwise they'd vanish once they no longer match Find).
+function replaceAll() {
+    if (!table) return;
+    const find = document.getElementById("search").value;
+    if (!find) return;
+    const repl = document.getElementById("replace").value;
+    const matchCase = isMatchCase();
+
+    let cells = 0, total = 0;
+    const tasks = [];
+    table.getRows().forEach(function (rowComp) {
+        const d = rowComp.getData();
+        const patch = {};
+        headers.forEach(function (_, c) {
+            const fld = fieldId(c);
+            const cur = d[fld] == null ? "" : String(d[fld]);
+            const r = replaceInCell(cur, find, repl, matchCase);
+            if (r.count > 0 && r.value !== cur) { patch[fld] = r.value; total += r.count; }
+        });
+        if (Object.keys(patch).length) { cells++; tasks.push(rowComp.update(patch)); }
+    });
+
+    Promise.all(tasks).then(function () {
+        if (cells > 0) markDirty();
+        document.getElementById("search").value = "";
+        document.getElementById("replace").value = "";
+        table.clearFilter();
+        setStatus("Replaced " + total + " occurrence" + (total === 1 ? "" : "s") +
+            " in " + cells + " cell" + (cells === 1 ? "" : "s"));
+    });
 }
 
 /* ---- Wiring ---- */

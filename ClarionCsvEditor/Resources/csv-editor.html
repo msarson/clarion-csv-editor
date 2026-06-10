@@ -33,6 +33,13 @@
         </label>
         <input type="search" id="search" class="search" placeholder="Find&#8230;"
                oninput="applySearch(this.value)" title="Filter to rows containing this text">
+        <input type="text" id="replace" class="search" placeholder="Replace&#8230;"
+               title="Replacement text for Replace All">
+        <button onclick="replaceAll()" title="Replace all occurrences of Find with Replace">Replace All</button>
+        <label class="toggle" title="Match case for find and replace">
+            <input type="checkbox" id="matchCase" onchange="applySearch(document.getElementById('search').value)">
+            Aa
+        </label>
         <span class="spacer"></span>
         <button id="darkBtn" onclick="toggleDark()" title="Toggle dark mode">🌓 Dark</button>
         <span class="status" id="status">No file loaded</span>
