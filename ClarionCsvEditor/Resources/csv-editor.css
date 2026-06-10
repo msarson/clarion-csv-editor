@@ -248,3 +248,29 @@ body.dark-mode .tabulator .tabulator-footer {
     border-top-color: #3c3c3c !important;
     color: #e0e0e0 !important;
 }
+
+/* Right-click context menu — the default theme is light, and body.dark-mode's text
+   colour would otherwise leave faint light text on a light menu. */
+body.dark-mode .tabulator-menu {
+    background: #2d2d2d !important;
+    border-color: #3c3c3c !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+body.dark-mode .tabulator-menu .tabulator-menu-item {
+    color: #e0e0e0 !important;
+}
+
+body.dark-mode .tabulator-menu .tabulator-menu-item:hover,
+body.dark-mode .tabulator-menu .tabulator-menu-item.tabulator-menu-item-active {
+    background: #094771 !important;
+    color: #fff !important;
+}
+
+body.dark-mode .tabulator-menu .tabulator-menu-item.tabulator-menu-item-disabled {
+    color: #777 !important;
+}
+
+body.dark-mode .tabulator-menu .tabulator-menu-separator {
+    border-color: #3c3c3c !important;
+}

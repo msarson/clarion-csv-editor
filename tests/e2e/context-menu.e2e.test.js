@@ -68,3 +68,12 @@ test("Paste via the menu fills from the clipboard", async ({ page }) => {
     await page.waitForFunction(() => getCsv().indexOf("9,8") !== -1);
     expect(await csvOut(page)).toBe("A,B\r\n9,8\r\n3,4\r\n");
 });
+
+test("context menu is dark-themed (readable) in dark mode", async ({ page }) => {
+    await openGrid(page, "A,B\r\n1,2\r\n");
+    await page.evaluate(() => setDarkMode(true));
+    await cell(page, 0, "c0").click({ button: "right" });
+    const menu = page.locator(".tabulator-menu");
+    await expect(menu).toBeVisible();
+    expect(await menu.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(45, 45, 45)");
+});
