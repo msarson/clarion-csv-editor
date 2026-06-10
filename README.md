@@ -4,6 +4,8 @@ A CSV / TSV viewer and editor addin for the Clarion IDE. Opens `.csv` and `.tsv`
 files in an editable grid rendered with [Tabulator](https://tabulator.info/)
 inside a WebView2 control, instead of the default plain-text editor.
 
+![The CSV Editor in dark mode — a sortable grid of employees.csv with the row gutter, header sort arrows, delimiter picker and find box](docs/screenshot.png)
+
 > Status: **v0.2.0** — full open → edit → save loop with a spreadsheet-style grid
 > (Tier 1 feature set). See [Roadmap](#roadmap) for what's next.
 
