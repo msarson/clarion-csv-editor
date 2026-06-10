@@ -63,8 +63,35 @@ body {
     border-color: #6aa3cc;
 }
 
+.toolbar .sep {
+    width: 1px;
+    align-self: stretch;
+    background: #d0d0d0;
+    margin: 2px 2px;
+}
+
+.toolbar input.search,
+.toolbar select {
+    padding: 3px 6px;
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    font-size: 12px;
+    background: #fff;
+    color: #1e1e1e;
+}
+
+.toolbar input.search {
+    width: 150px;
+}
+
 .toolbar .spacer {
     flex: 1 1 auto;
+}
+
+/* Row-number gutter */
+.tabulator .row-header {
+    color: #999;
+    background: #f7f7f7;
 }
 
 .toolbar .status {
@@ -120,6 +147,22 @@ body.dark-mode .toolbar .status {
 
 body.dark-mode .toolbar .toggle {
     color: #ccc;
+}
+
+body.dark-mode .toolbar .sep {
+    background: #3c3c3c;
+}
+
+body.dark-mode .toolbar input.search,
+body.dark-mode .toolbar select {
+    background: #333;
+    border-color: #4a4a4a;
+    color: #e0e0e0;
+}
+
+body.dark-mode .tabulator .row-header {
+    color: #888;
+    background: #252525 !important;
 }
 
 /* ---- Tabulator dark overrides ----

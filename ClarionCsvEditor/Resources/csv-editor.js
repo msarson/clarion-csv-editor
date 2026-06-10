@@ -4,7 +4,7 @@
  * Owns the editable grid. The C# host owns the file on disk. Contract:
  *   C# -> JS : loadCsv(text, fileName, delimiter), setDarkMode("true"|"false"),
  *              onFileSaved(fileName)
- *   JS -> C# : post({ type: "ready" | "contentChanged" | "saveRequested" | "darkModeChanged", ... })
+ *   JS -> C# : post({ type: "ready" | "dirtyChanged" | "saveRequested" | "darkModeChanged", ... })
  *
  * Column model: columns use stable internal field ids (c0, c1, ...) so duplicate
  * or empty header text never collides.
@@ -33,6 +33,16 @@ let dirty = false;         // true when there are unsaved edits
 let fileEol = "\r\n";
 let fileEndsWithNewline = true;
 
+// Raw text of the loaded file, kept so a delimiter change can re-parse the source.
+let originalText = "";
+// CSV of the grid as it was last loaded/saved — the "clean" baseline. The document
+// is dirty only while the current grid differs from this, so undoing every change
+// (or re-typing the original value) clears the dirty state, like other editors.
+let savedCsv = "";
+// Promise of the most recent grid (re)build, so structural ops can run follow-up
+// work (mark dirty, refresh status) only after setData() has actually applied.
+let lastBuild = Promise.resolve();
+
 const CSV_SNAPSHOT_PREFIX = "CSV:";
 
 function post(payload) {
@@ -46,11 +56,13 @@ function post(payload) {
 
 // Push the current grid as CSV to the host over the raw-string channel, so the
 // host always holds the latest content and can save synchronously. Sent as a
-// plain string (not JSON) to avoid escaping a large payload.
-function pushSnapshot() {
+// plain string (not JSON) to avoid escaping a large payload. Pass a precomputed
+// csv to avoid serialising twice.
+function pushSnapshot(csv) {
     if (!table) return;
+    if (csv === undefined) csv = getCsv();
     if (window.chrome && window.chrome.webview) {
-        window.chrome.webview.postMessage(CSV_SNAPSHOT_PREFIX + getCsv());
+        window.chrome.webview.postMessage(CSV_SNAPSHOT_PREFIX + csv);
     }
 }
 
@@ -58,15 +70,28 @@ function fieldId(i) { return "c" + i; }
 
 function genericName(i) { return "Column " + (i + 1); }
 
-function setDirty(value) {
+// Tell the host the dirty state changed (only when it actually flips), so the IDE
+// tab's '*' tracks whether the grid differs from the saved baseline.
+function setDirtyState(value) {
+    if (dirty === value) return;
     dirty = value;
+    post({ type: "dirtyChanged", dirty: value ? "true" : "false" });
 }
 
+// Adopt the current grid as the saved baseline and clear dirty. Called on load and
+// after a successful save, when the grid matches what's on disk.
+function markClean() {
+    savedCsv = getCsv();
+    setDirtyState(false);
+}
+
+// A change happened: refresh the host snapshot and set dirty according to whether
+// the grid still differs from the saved baseline (so undo-to-original clears it).
 function markDirty() {
     if (suppressDirty) return;
-    if (!dirty) setDirty(true);
-    post({ type: "contentChanged" });
-    pushSnapshot();
+    const csv = getCsv();
+    pushSnapshot(csv);
+    setDirtyState(csv !== savedCsv);
 }
 
 function setStatus(text) {
@@ -79,7 +104,7 @@ function buildColumns() {
         field: fieldId(i),
         editor: "input",
         editableTitle: hasHeader, // generic captions aren't real data; keep them read-only
-        headerSort: false,
+        headerSort: true,
         resizable: true,
         widthGrow: 1,
     }));
@@ -90,13 +115,40 @@ function ensureTable() {
     table = new Tabulator("#grid", {
         height: "100%",
         layout: "fitDataStretch",
-        // Single-row selection: clicking a cell in another row moves the
-        // highlight rather than accumulating selections. Tabulator deselects
-        // the previous row once the limit (1) is exceeded.
-        selectableRows: 1,
         reactiveData: false,
         columns: [],
         data: [],
+
+        // #1 Sorting: only the sort-arrow icon triggers a sort, leaving a plain
+        // header click free to select the column and a double-click to edit its title.
+        headerSortClickElement: "icon",
+
+        // #3 Undo / redo of cell edits and row add/delete.
+        history: true,
+
+        // #4 / #5 Excel-style cell-range selection + clipboard. Single click or drag
+        // selects a range; double-click edits. Copy/paste use TSV — the same format
+        // Excel puts on the clipboard — so blocks round-trip with a spreadsheet.
+        selectableRange: 1,
+        selectableRangeColumns: true,
+        selectableRangeRows: true,
+        editTriggerEvent: "dblclick",
+        clipboard: true,
+        clipboardCopyStyled: false,
+        clipboardCopyConfig: { columnHeaders: false }, // copy raw cell values, no header row
+        clipboardCopyRowRange: "range",
+        // Parser AND action must both be "range" for spreadsheet-style paste: a TSV
+        // block fills outward from the anchor cell across columns/rows. With the
+        // default "table" parser the action mis-maps and only the last value lands.
+        clipboardPasteParser: "range",
+        clipboardPasteAction: "range",
+
+        // Row-number gutter; also the click target for selecting whole rows.
+        rowHeader: {
+            formatter: "rownum", hozAlign: "center", headerSort: false,
+            resizable: false, frozen: true, width: 44, editor: false,
+            cssClass: "row-header",
+        },
     });
 
     table.on("cellEdited", markDirty);
@@ -110,6 +162,10 @@ function ensureTable() {
     // Reliable post-mutation hook: fires after edits/adds/deletes are applied,
     // so the host's CSV cache is never stale (Tabulator's add/delete are async).
     table.on("dataChanged", function () { pushSnapshot(); });
+    // Undo/redo and clipboard paste change data outside cellEdited — mark dirty too.
+    table.on("historyUndo", markDirty);
+    table.on("historyRedo", markDirty);
+    table.on("clipboardPasted", markDirty);
 }
 
 /* ---- Header-mode helpers ---- */
@@ -124,13 +180,18 @@ function firstRowLooksLikeHeader(rows) {
     return true;
 }
 
-// Current grid contents as a plain array-of-arrays, header row excluded
-// (the header lives in `headers`, not in the row data).
+// Current grid contents as a plain array-of-arrays, header row excluded (the header
+// lives in `headers`, not in row data). Rows are emitted in their original logical
+// order (_ord), not the current sort/filter view — getData() returns every row
+// including any hidden by a search filter, so a save never loses or reorders data.
 function currentDataMatrix() {
-    return table.getData().map(row => headers.map((_, c) => {
-        const v = row[fieldId(c)];
-        return v == null ? "" : v;
-    }));
+    return table.getData()
+        .slice()
+        .sort((a, b) => (a._ord == null ? 1e9 : a._ord) - (b._ord == null ? 1e9 : b._ord))
+        .map(row => headers.map((_, c) => {
+            const v = row[fieldId(c)];
+            return v == null ? "" : v;
+        }));
 }
 
 // Rebuild the grid from a full matrix (array-of-arrays). Splits the matrix into
@@ -154,8 +215,8 @@ function buildFrom(rows) {
         dataRows = rows.slice(0);
     }
 
-    const data = dataRows.map(row => {
-        const obj = {};
+    const data = dataRows.map((row, idx) => {
+        const obj = { _ord: idx };   // stable logical order; keeps sort/filter view-only
         for (let c = 0; c < colCount; c++) obj[fieldId(c)] = c < row.length ? row[c] : "";
         return obj;
     });
@@ -165,11 +226,12 @@ function buildFrom(rows) {
     // Push the snapshot only once the data is actually applied — getCsv() reads
     // the live grid, which is empty until this promise resolves. Pushing earlier
     // would cache an empty file and a subsequent save would wipe the CSV.
-    table.setData(data).then(() => {
+    lastBuild = table.setData(data).then(() => {
         suppressDirty = false;
         pushSnapshot();
+        refreshStatus();
     });
-    return data.length;
+    return lastBuild;
 }
 
 function syncHeaderToggle() {
@@ -177,29 +239,44 @@ function syncHeaderToggle() {
     if (cb) cb.checked = hasHeader;
 }
 
-// Grid dimensions only — the file name lives on the IDE document tab, not here.
-function setStatusForFile(rowCount) {
+// Grid dimensions (the file name lives on the IDE document tab, not here). When a
+// search filter is hiding rows it shows "<shown> of <total> rows".
+function refreshStatus() {
+    if (!table) return;
+    const total = table.getDataCount();
+    const shown = table.getDataCount("active");
     const mode = hasHeader ? "" : "  (no header)";
-    setStatus(rowCount + " rows × " + headers.length + " cols" + mode);
+    let s = total + " rows × " + headers.length + " cols" + mode;
+    if (shown !== total) s = shown + " of " + s;
+    setStatus(s);
 }
 
 /* ---- C# -> JS entry points ---- */
 
 function loadCsv(text, fileName, delim) {
-    delimiter = delim || ",";
+    originalText = text || "";
     ensureTable();
 
-    text = text || "";
-    fileEol = text.indexOf("\r\n") !== -1 ? "\r\n" : "\n";
-    fileEndsWithNewline = /\n$/.test(text);
+    fileEol = originalText.indexOf("\r\n") !== -1 ? "\r\n" : "\n";
+    fileEndsWithNewline = /\n$/.test(originalText);
 
-    const parsed = Papa.parse(text, {
-        delimiter: delimiter,
+    // .tsv forces tab; otherwise let Papa auto-detect (comma, semicolon, tab, pipe).
+    parseAndBuild((delim === "\t") ? "\t" : null);
+}
+
+// (Re)parse the original file text and rebuild the grid. forcedDelim null = let Papa
+// auto-detect the delimiter. Always works from the source text, so changing the
+// delimiter re-reads the file. The grid's host CSV cache is reseeded by buildFrom().
+function parseAndBuild(forcedDelim) {
+    const parsed = Papa.parse(originalText, {
+        delimiter: forcedDelim || "",
         skipEmptyLines: false,
         newline: "",
     });
-    const rows = parsed.data || [];
+    delimiter = parsed.meta.delimiter || forcedDelim || ",";
+    syncDelimiterPicker();
 
+    const rows = parsed.data || [];
     // Papa keeps a trailing one-cell empty row [""] for a file that ends with a
     // newline. Left in the grid it becomes a phantom blank row that getCsv() pads
     // to the full column width (",,,,,,,") on save. Drop it — the trailing newline
@@ -211,11 +288,21 @@ function loadCsv(text, fileName, delim) {
 
     hasHeader = firstRowLooksLikeHeader(rows);
     syncHeaderToggle();
+    buildFrom(rows);
+    lastBuild.then(markClean);   // load / delimiter-change: the grid now matches the file
+}
 
-    const rowCount = buildFrom(rows);
-    setDirty(false);
-    // Note: the host cache is seeded by buildFrom() once setData() resolves.
-    setStatusForFile(rowCount);
+// Delimiter picker changed: re-read the original file with the chosen delimiter.
+// Note: this re-parses the source, so edits made since load are discarded.
+function changeDelimiter(v) {
+    const d = v === "tab" ? "\t" : v;
+    if (d === delimiter) return;
+    parseAndBuild(d);
+}
+
+function syncDelimiterPicker() {
+    const sel = document.getElementById("delimiter");
+    if (sel) sel.value = (delimiter === "\t") ? "tab" : delimiter;
 }
 
 // Called by the host on load to apply the persisted preference. `on` arrives as
@@ -234,10 +321,10 @@ function toggleDark() {
     post({ type: "darkModeChanged", isDark: enabled ? "true" : "false" });
 }
 
-// Host signals a successful save. The IDE tab's dirty '*' already conveys the
-// save state, so there is nothing to show here — just clear the in-page dirty flag.
+// Host signals a successful save. The grid now matches what was written to disk,
+// so adopt it as the clean baseline (the IDE tab's '*' conveys the rest).
 function onFileSaved(fileName) {
-    setDirty(false);
+    markClean();
 }
 
 /* ---- JS -> C# returning data ---- */
@@ -283,29 +370,64 @@ function toggleHeader() {
     const data = currentDataMatrix();
     const full = hasHeader ? [headers.slice(), ...data] : data;
     hasHeader = want;
-    const rowCount = buildFrom(full); // re-seeds the host cache when setData resolves
-    setStatusForFile(rowCount);
+    buildFrom(full); // re-seeds the host cache + refreshes status when setData resolves
+    lastBuild.then(markDirty); // header on/off changes the saved text -> recompute dirty
 }
+
+/* ---- Selection helpers (Excel-style range model) ---- */
+
+// Rows intersected by the current selection range(s), de-duplicated.
+function selectedRows() {
+    if (!table) return [];
+    const seen = new Set(), out = [];
+    table.getRanges().forEach(rg => rg.getRows().forEach(r => {
+        if (!seen.has(r)) { seen.add(r); out.push(r); }
+    }));
+    return out;
+}
+
+// Data-column indexes (into `headers`) intersected by the current selection.
+function selectedColumnIndexes() {
+    if (!table) return [];
+    const idxs = new Set();
+    table.getRanges().forEach(rg => rg.getColumns().forEach(c => {
+        const f = c.getField();
+        if (f && /^c\d+$/.test(f)) idxs.add(parseInt(f.substring(1), 10));
+    }));
+    return Array.from(idxs).sort((a, b) => a - b);
+}
+
+function maxOrd() {
+    let m = -1;
+    table.getData().forEach(r => { if ((r._ord || 0) > m) m = r._ord; });
+    return m;
+}
+
+// Smallest _ord greater than ref, so an inserted row sorts right after its anchor.
+function ordAfter(ref) {
+    let next = Infinity;
+    table.getData().forEach(r => { if (r._ord > ref && r._ord < next) next = r._ord; });
+    return next === Infinity ? ref + 1 : (ref + next) / 2;
+}
+
+function doUndo() { if (table) table.undo(); }
+function doRedo() { if (table) table.redo(); }
+
+/* ---- Toolbar actions: rows & columns ---- */
 
 function addRow() {
     if (!table) return;
-    const blank = {};
+    const ref = selectedRows().pop();
+    const blank = { _ord: ref ? ordAfter(ref.getData()._ord) : maxOrd() + 1 };
     headers.forEach((_, c) => { blank[fieldId(c)] = ""; });
-    const selected = table.getSelectedRows();
-    if (selected.length > 0) {
-        table.addRow(blank, false, selected[selected.length - 1]);
-    } else {
-        table.addRow(blank);
-    }
-    markDirty();
+    table.addRow(blank, false, ref).then(() => { markDirty(); refreshStatus(); });
 }
 
 function deleteSelectedRows() {
     if (!table) return;
-    const selected = table.getSelectedRows();
-    if (selected.length === 0) return;
-    selected.forEach(r => r.delete());
-    markDirty();
+    const rows = selectedRows();
+    if (rows.length === 0) return;
+    Promise.all(rows.map(r => r.delete())).then(() => { markDirty(); refreshStatus(); });
 }
 
 function addColumn() {
@@ -313,15 +435,43 @@ function addColumn() {
     const i = headers.length;
     headers.push(genericName(i));
     table.addColumn({
-        title: headers[i],
-        field: fieldId(i),
-        editor: "input",
-        editableTitle: hasHeader,
-        headerSort: false,
-        resizable: true,
-        widthGrow: 1,
+        title: headers[i], field: fieldId(i), editor: "input",
+        editableTitle: hasHeader, headerSort: true, resizable: true, widthGrow: 1,
+    }).then(() => { markDirty(); refreshStatus(); });
+}
+
+// Delete the selected column(s), or the last column if nothing is selected. Field
+// ids (c0..cN) must stay contiguous, so rebuild from a full matrix with the chosen
+// columns removed rather than dropping columns in place.
+function deleteSelectedColumns() {
+    if (!table || headers.length === 0) return;
+    let idxs = selectedColumnIndexes();
+    if (idxs.length === 0) idxs = [headers.length - 1];
+    if (idxs.length >= headers.length) return; // keep at least one column
+    const drop = new Set(idxs);
+    const header = headers.filter((_, c) => !drop.has(c));
+    const body = currentDataMatrix().map(row => row.filter((_, c) => !drop.has(c)));
+    buildFrom(hasHeader ? [header, ...body] : body);
+    lastBuild.then(() => { markDirty(); refreshStatus(); });
+}
+
+/* ---- Search ---- */
+
+// Filter to rows where any cell contains the query (case-insensitive). Filtered-out
+// rows are still saved — currentDataMatrix() reads the full data set, not just the
+// visible rows.
+function applySearch(q) {
+    if (!table) return;
+    q = (q || "").trim().toLowerCase();
+    if (!q) { table.clearFilter(); refreshStatus(); return; }
+    table.setFilter(function (data) {
+        for (let c = 0; c < headers.length; c++) {
+            const v = data[fieldId(c)];
+            if (String(v == null ? "" : v).toLowerCase().indexOf(q) !== -1) return true;
+        }
+        return false;
     });
-    markDirty();
+    refreshStatus();
 }
 
 /* ---- Wiring ---- */
@@ -331,11 +481,23 @@ function addColumn() {
 // handle it by asking the host to save. The host reads commitAndGetCsv(), which
 // commits any in-flight cell edit before serialising, so nothing typed is lost.
 document.addEventListener("keydown", function (e) {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        post({ type: "saveRequested" });
-    }
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod) return;
+    const k = e.key.toLowerCase();
+
+    if (k === "s") { e.preventDefault(); post({ type: "saveRequested" }); return; }
+
+    // While a cell/title editor is open, leave undo/redo to the browser so it acts
+    // on the text being typed rather than the whole grid.
+    if (isEditing()) return;
+    if (k === "z" && !e.shiftKey) { e.preventDefault(); doUndo(); }
+    else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); doRedo(); }
 });
+
+function isEditing() {
+    const el = document.activeElement;
+    return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+}
 
 ensureTable();
 post({ type: "ready" });

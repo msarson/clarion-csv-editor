@@ -13,10 +13,26 @@
         <button onclick="addRow()" title="Add a row below the selection">+ Row</button>
         <button onclick="deleteSelectedRows()" title="Delete selected rows">- Row</button>
         <button onclick="addColumn()" title="Add a column">+ Col</button>
+        <button onclick="deleteSelectedColumns()" title="Delete selected column(s)">- Col</button>
+        <span class="sep"></span>
+        <button onclick="doUndo()" title="Undo (Ctrl+Z)">&#8634;</button>
+        <button onclick="doRedo()" title="Redo (Ctrl+Y)">&#8635;</button>
+        <span class="sep"></span>
         <label class="toggle" title="Treat the first row as column headers">
             <input type="checkbox" id="headerToggle" checked onchange="toggleHeader()">
             First row is header
         </label>
+        <label class="toggle" title="Field delimiter">
+            Delim
+            <select id="delimiter" onchange="changeDelimiter(this.value)">
+                <option value=",">, comma</option>
+                <option value=";">; semicolon</option>
+                <option value="tab">&#8677; tab</option>
+                <option value="|">| pipe</option>
+            </select>
+        </label>
+        <input type="search" id="search" class="search" placeholder="Find&#8230;"
+               oninput="applySearch(this.value)" title="Filter to rows containing this text">
         <span class="spacer"></span>
         <button id="darkBtn" onclick="toggleDark()" title="Toggle dark mode">🌓 Dark</button>
         <span class="status" id="status">No file loaded</span>
