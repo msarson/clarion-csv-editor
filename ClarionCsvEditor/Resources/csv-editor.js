@@ -28,6 +28,11 @@ let hasHeader = true;      // see "Header mode" above
 let suppressDirty = false; // true while we programmatically (re)load data
 let dirty = false;         // true when there are unsaved edits
 
+// Original file's line-ending style and whether it ended with a trailing newline,
+// captured on load so a re-save reproduces them exactly (round-trip fidelity).
+let fileEol = "\r\n";
+let fileEndsWithNewline = true;
+
 const CSV_SNAPSHOT_PREFIX = "CSV:";
 
 function post(payload) {
@@ -184,12 +189,25 @@ function loadCsv(text, fileName, delim) {
     delimiter = delim || ",";
     ensureTable();
 
+    text = text || "";
+    fileEol = text.indexOf("\r\n") !== -1 ? "\r\n" : "\n";
+    fileEndsWithNewline = /\n$/.test(text);
+
     const parsed = Papa.parse(text, {
         delimiter: delimiter,
         skipEmptyLines: false,
         newline: "",
     });
     const rows = parsed.data || [];
+
+    // Papa keeps a trailing one-cell empty row [""] for a file that ends with a
+    // newline. Left in the grid it becomes a phantom blank row that getCsv() pads
+    // to the full column width (",,,,,,,") on save. Drop it — the trailing newline
+    // itself is restored on save via fileEndsWithNewline.
+    if (rows.length > 1) {
+        const last = rows[rows.length - 1];
+        if (last.length === 1 && last[0] === "") rows.pop();
+    }
 
     hasHeader = firstRowLooksLikeHeader(rows);
     syncHeaderToggle();
@@ -224,12 +242,30 @@ function onFileSaved(fileName) {
 /* ---- JS -> C# returning data ---- */
 
 // Returns the full CSV text for the C# host to write to disk. A header line is
-// emitted only in header mode, so the output matches the original file.
+// emitted only in header mode, and the original line-ending style and trailing
+// newline are reproduced, so the output round-trips the source file.
 function getCsv() {
     if (!table) return "";
     const body = currentDataMatrix();
     const matrix = hasHeader ? [headers.slice(), ...body] : body;
-    return Papa.unparse(matrix, { delimiter: delimiter });
+    let out = Papa.unparse(matrix, { delimiter: delimiter, newline: fileEol });
+    if (fileEndsWithNewline) out += fileEol;
+    return out;
+}
+
+// Commit any in-flight cell editor, then return the CSV. The host calls THIS at
+// save time (not getCsv directly) so the value currently being typed is always
+// included, regardless of how the save was triggered (Ctrl+S, IDE File > Save,
+// ...). Blur commits the editor into the grid; suppressDirty stops that commit
+// from re-marking the document dirty after we're about to clear it on save.
+function commitAndGetCsv() {
+    const el = document.activeElement;
+    if (el && typeof el.blur === "function") {
+        suppressDirty = true;
+        el.blur();
+        suppressDirty = false;
+    }
+    return getCsv();
 }
 
 /* ---- Toolbar actions ---- */
@@ -291,13 +327,11 @@ function addColumn() {
 
 // Ctrl+S saves. WebView2 captures keyboard input while the grid has focus and does
 // NOT forward the keystroke to the IDE's File > Save accelerator, so the page has to
-// handle it: commit any in-flight cell edit (blur fires cellEdited -> the host's CSV
-// snapshot updates), then ask the host to save. The host pulls getCsv() to write.
+// handle it by asking the host to save. The host reads commitAndGetCsv(), which
+// commits any in-flight cell edit before serialising, so nothing typed is lost.
 document.addEventListener("keydown", function (e) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        const el = document.activeElement;
-        if (el && typeof el.blur === "function") el.blur();
         post({ type: "saveRequested" });
     }
 });

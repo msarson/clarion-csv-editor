@@ -252,7 +252,7 @@ namespace ClarionCsvEditor
             _pullingCsv = true;
             try
             {
-                var task = webView.ExecuteScriptAsync("getCsv()");
+                var task = webView.ExecuteScriptAsync("commitAndGetCsv()");
 
                 int guard = 0;
                 while (!task.IsCompleted && guard++ < 5000)
@@ -295,7 +295,7 @@ namespace ClarionCsvEditor
             if (!_isWebViewReady) return fallback;
             try
             {
-                var decoded = DecodeJsonString(await webView.ExecuteScriptAsync("getCsv()"));
+                var decoded = DecodeJsonString(await webView.ExecuteScriptAsync("commitAndGetCsv()"));
                 if (decoded != null)
                 {
                     _latestCsv = decoded;
