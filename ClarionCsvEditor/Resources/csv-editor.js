@@ -267,13 +267,34 @@ function loadCsv(text, fileName, delim) {
 // (Re)parse the original file text and rebuild the grid. forcedDelim null = let Papa
 // auto-detect the delimiter. Always works from the source text, so changing the
 // delimiter re-reads the file. The grid's host CSV cache is reseeded by buildFrom().
+// Pick the delimiter that yields the most columns with a consistent count across a
+// preview of rows. Papa's own guesser favours comma on a low-column-count tie, so a
+// 2-column tab/pipe/semicolon file with no commas would load as one column; this
+// prefers whichever candidate actually splits the rows. Papa does the splitting, so
+// quoted delimiters are handled correctly. Falls back to comma when nothing splits.
+function detectDelimiter(text) {
+    let best = ",";
+    let bestCols = 1;
+    for (const d of [",", ";", "\t", "|"]) {
+        const rows = (Papa.parse(text, { delimiter: d, skipEmptyLines: true, preview: 25, newline: "" }).data) || [];
+        if (rows.length === 0) continue;
+        const cols = rows[0].length;
+        const consistent = rows.every(r => r.length === cols);
+        if (consistent && cols > bestCols) {
+            best = d;
+            bestCols = cols;
+        }
+    }
+    return best;
+}
+
 function parseAndBuild(forcedDelim) {
+    delimiter = forcedDelim || detectDelimiter(originalText);
     const parsed = Papa.parse(originalText, {
-        delimiter: forcedDelim || "",
+        delimiter: delimiter,
         skipEmptyLines: false,
         newline: "",
     });
-    delimiter = parsed.meta.delimiter || forcedDelim || ",";
     syncDelimiterPicker();
 
     const rows = parsed.data || [];

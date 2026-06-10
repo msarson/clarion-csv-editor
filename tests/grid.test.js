@@ -138,13 +138,25 @@ test("auto-detects a pipe delimiter", async () => {
     assert.strictEqual(api.state().delimiter, "|");
 });
 
-// Documents a known auto-detect limitation: a 2-column tab/pipe file with no commas
-// falls back to comma (Papa's guesser favours comma on a low-column-count tie), so it
-// loads as a single column. .tsv files are unaffected (tab is forced), and the
-// delimiter picker is the manual workaround. Pinned so a future fix is noticed here.
-test("KNOWN LIMITATION: 2-column tab without commas mis-detects as comma", async () => {
+test("auto-detects a 2-column tab file (no commas present)", async () => {
     const { api } = loadEditor();
     api.loadCsv("a\tb\n1\t2\n", "f.csv", null);
+    await flush();
+    assert.strictEqual(api.state().delimiter, "\t");
+    assert.strictEqual(api.state().colCount, 2);
+});
+
+test("auto-detects a 2-column semicolon file", async () => {
+    const { api } = loadEditor();
+    api.loadCsv("a;b\n1;2\n", "f.csv", null);
+    await flush();
+    assert.strictEqual(api.state().delimiter, ";");
+    assert.strictEqual(api.state().colCount, 2);
+});
+
+test("a plain single-column file stays one column (comma default)", async () => {
+    const { api } = loadEditor();
+    api.loadCsv("Name\r\nAlice\r\nBob\r\n", "f.csv", null);
     await flush();
     assert.strictEqual(api.state().delimiter, ",");
     assert.strictEqual(api.state().colCount, 1);
