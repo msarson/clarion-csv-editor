@@ -94,6 +94,18 @@ body {
     background: #f7f7f7;
 }
 
+/* Inline column-title rename editor (double-click a header) */
+.tabulator .tabulator-col-title input.col-title-editor {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #6aa3cc;
+    border-radius: 2px;
+    padding: 1px 3px;
+    font: inherit;
+    background: #fff;
+    color: #1e1e1e;
+}
+
 .toolbar .status {
     color: #666;
     font-size: 11px;
@@ -163,6 +175,12 @@ body.dark-mode .toolbar select {
 body.dark-mode .tabulator .row-header {
     color: #888;
     background: #252525 !important;
+}
+
+body.dark-mode .tabulator .tabulator-col-title input.col-title-editor {
+    background: #333;
+    border-color: #1f6fb2;
+    color: #fff;
 }
 
 /* ---- Tabulator dark overrides ----

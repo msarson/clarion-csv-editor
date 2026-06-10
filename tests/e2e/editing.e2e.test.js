@@ -101,13 +101,28 @@ test("clicking the row gutter selects the whole row", async ({ page }) => {
     expect(await page.evaluate(() => table.getRanges()[0].getData())).toEqual([{ c0: "3", c1: "4" }]);
 });
 
-// KNOWN LIMITATION (surfaced by this suite): clicking a column header does not
-// select the whole column, even though the equivalent row-gutter click does. The
-// header click is consumed by the sort/editable-title handling. Selecting a cell in
-// the column still works (and -Col uses that), so this is a convenience gap, not a
-// blocker. Pinned with test.fail so it flips green the moment it's fixed.
-test.fail("clicking a column header selects the whole column", async ({ page }) => {
+test("single-click a column header selects the whole column", async ({ page }) => {
     await openGrid(page, "A,B\r\n1,2\r\n3,4\r\n");
-    await page.locator('.tabulator-col[tabulator-field="c0"]').click();
+    await page.locator('.tabulator-col[tabulator-field="c0"] .tabulator-col-title').click();
     expect(await page.evaluate(() => table.getRanges()[0].getData())).toEqual([{ c0: "1" }, { c0: "3" }]);
+});
+
+test("double-click a column header renames it (Enter commits)", async ({ page }) => {
+    await openGrid(page, "A,B\r\n1,2\r\n");
+    await page.locator('.tabulator-col[tabulator-field="c0"] .tabulator-col-title').dblclick();
+    await page.locator("input.col-title-editor").fill("Name");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => headers[0] === "Name");
+    expect(await csvOut(page)).toBe("Name,B\r\n1,2\r\n");
+    expect(await dirtyNow(page)).toBe(true);
+});
+
+test("Escape cancels a column rename", async ({ page }) => {
+    await openGrid(page, "A,B\r\n1,2\r\n");
+    await page.locator('.tabulator-col[tabulator-field="c0"] .tabulator-col-title').dblclick();
+    await page.locator("input.col-title-editor").fill("Zzz");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("input.col-title-editor"));
+    expect(await csvOut(page)).toBe("A,B\r\n1,2\r\n");
+    expect(await dirtyNow(page)).toBe(false);
 });

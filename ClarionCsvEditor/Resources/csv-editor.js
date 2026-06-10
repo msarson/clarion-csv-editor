@@ -98,16 +98,22 @@ function setStatus(text) {
     document.getElementById("status").textContent = text;
 }
 
-function buildColumns() {
-    return headers.map((title, i) => ({
-        title: title,
+// One data column's definition. Titles are NOT editableTitle (that opens on a single
+// click and would swallow the header click we use to select the column); renaming is
+// handled by a double-click editor instead — see editColumnTitle().
+function colDef(i) {
+    return {
+        title: headers[i],
         field: fieldId(i),
         editor: "input",
-        editableTitle: hasHeader, // generic captions aren't real data; keep them read-only
         headerSort: true,
         resizable: true,
         widthGrow: 1,
-    }));
+    };
+}
+
+function buildColumns() {
+    return headers.map((_, i) => colDef(i));
 }
 
 function ensureTable() {
@@ -152,13 +158,9 @@ function ensureTable() {
     });
 
     table.on("cellEdited", markDirty);
-    table.on("columnTitleChanged", function (column) {
-        if (!hasHeader) return; // captions are read-only in headerless mode
-        const field = column.getField();
-        const idx = parseInt(field.substring(1), 10);
-        if (!isNaN(idx)) headers[idx] = column.getDefinition().title;
-        markDirty();
-    });
+    // Single click on a column header selects the whole column (native selectableRange
+    // behaviour, now that titles are not single-click editable); double click renames it.
+    table.on("headerDblClick", function (e, column) { editColumnTitle(column); });
     // Reliable post-mutation hook: fires after edits/adds/deletes are applied,
     // so the host's CSV cache is never stale (Tabulator's add/delete are async).
     table.on("dataChanged", function () { pushSnapshot(); });
@@ -455,10 +457,46 @@ function addColumn() {
     if (!table) return;
     const i = headers.length;
     headers.push(genericName(i));
-    table.addColumn({
-        title: headers[i], field: fieldId(i), editor: "input",
-        editableTitle: hasHeader, headerSort: true, resizable: true, widthGrow: 1,
-    }).then(() => { markDirty(); refreshStatus(); });
+    table.addColumn(colDef(i)).then(() => { markDirty(); refreshStatus(); });
+}
+
+// Rename a column via a temporary input in its header (double-click). Commits on
+// Enter/blur, cancels on Escape. headers[] holds the saved truth; updateDefinition
+// re-renders the header from colDef() so the new title persists across re-renders.
+function editColumnTitle(column) {
+    if (!hasHeader) return; // generic captions in headerless mode aren't real data
+    const field = column.getField();
+    if (!field || !/^c\d+$/.test(field)) return;
+    const idx = parseInt(field.substring(1), 10);
+    const titleEl = column.getElement().querySelector(".tabulator-col-title");
+    if (!titleEl || titleEl.querySelector("input.col-title-editor")) return;
+
+    const old = headers[idx];
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "col-title-editor";
+    input.value = old;
+    titleEl.textContent = "";
+    titleEl.appendChild(input);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const finish = (save) => {
+        if (done) return;
+        done = true;
+        if (save && input.value !== old) {
+            headers[idx] = input.value;
+            markDirty();
+        }
+        column.updateDefinition(colDef(idx)); // re-render header (also removes the input)
+    };
+    input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
 }
 
 // Delete the selected column(s), or the last column if nothing is selected. Field
