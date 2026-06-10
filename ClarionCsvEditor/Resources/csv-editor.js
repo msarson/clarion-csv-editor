@@ -4,8 +4,7 @@
  * Owns the editable grid. The C# host owns the file on disk. Contract:
  *   C# -> JS : loadCsv(text, fileName, delimiter), setDarkMode("true"|"false"),
  *              onFileSaved(fileName)
- *   JS -> C# : post({ type: "ready" | "contentChanged" | "saveRequested"
- *                          | "darkModeChanged", ... })
+ *   JS -> C# : post({ type: "ready" | "contentChanged" | "darkModeChanged", ... })
  *
  * Column model: columns use stable internal field ids (c0, c1, ...) so duplicate
  * or empty header text never collides.
@@ -56,8 +55,6 @@ function genericName(i) { return "Column " + (i + 1); }
 
 function setDirty(value) {
     dirty = value;
-    const btn = document.getElementById("saveBtn");
-    if (btn) btn.disabled = !value;
 }
 
 function markDirty() {
@@ -175,18 +172,16 @@ function syncHeaderToggle() {
     if (cb) cb.checked = hasHeader;
 }
 
-function setStatusForFile(fileName, rowCount) {
+// Grid dimensions only — the file name lives on the IDE document tab, not here.
+function setStatusForFile(rowCount) {
     const mode = hasHeader ? "" : "  (no header)";
-    setStatus(fileName + "  —  " + rowCount + " rows × " + headers.length + " cols" + mode);
+    setStatus(rowCount + " rows × " + headers.length + " cols" + mode);
 }
-
-let lastFileName = "";
 
 /* ---- C# -> JS entry points ---- */
 
 function loadCsv(text, fileName, delim) {
     delimiter = delim || ",";
-    lastFileName = fileName;
     ensureTable();
 
     const parsed = Papa.parse(text, {
@@ -202,7 +197,7 @@ function loadCsv(text, fileName, delim) {
     const rowCount = buildFrom(rows);
     setDirty(false);
     // Note: the host cache is seeded by buildFrom() once setData() resolves.
-    setStatusForFile(fileName, rowCount);
+    setStatusForFile(rowCount);
 }
 
 // Called by the host on load to apply the persisted preference. `on` arrives as
@@ -223,7 +218,7 @@ function toggleDark() {
 
 function onFileSaved(fileName) {
     setDirty(false);
-    setStatus("Saved  " + fileName);
+    setStatus("Saved");
 }
 
 /* ---- JS -> C# returning data ---- */
@@ -252,7 +247,7 @@ function toggleHeader() {
     const full = hasHeader ? [headers.slice(), ...data] : data;
     hasHeader = want;
     const rowCount = buildFrom(full); // re-seeds the host cache when setData resolves
-    setStatusForFile(lastFileName || "(untitled)", rowCount);
+    setStatusForFile(rowCount);
 }
 
 function addRow() {
@@ -292,19 +287,13 @@ function addColumn() {
     markDirty();
 }
 
-function requestSave() {
-    if (!dirty) return;
-    post({ type: "saveRequested" });
-}
-
 /* ---- Wiring ---- */
 
-document.addEventListener("keydown", function (e) {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        requestSave();
-    }
-});
+// NOTE: saving is owned entirely by the IDE (File > Save / Ctrl+S). The page does
+// not initiate saves and has no Save button — a page-level Ctrl+S keydown listener
+// would preventDefault and swallow the key before the IDE accelerator could fire.
+// On save the host pulls the grid via getCsv(); markDirty() also pushes a snapshot
+// so the host always holds current content.
 
 ensureTable();
 post({ type: "ready" });

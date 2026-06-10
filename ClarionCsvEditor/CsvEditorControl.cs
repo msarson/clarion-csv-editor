@@ -16,7 +16,7 @@ namespace ClarionCsvEditor
     ///
     /// Communication over WebView2 messages:
     ///   C# -> JS : ExecuteScriptAsync("loadCsv(...)"), "setDarkMode(...)", "onFileSaved(...)"
-    ///   JS -> C# (object) : { type: "ready" | "contentChanged" | "saveRequested" | "darkModeChanged" }
+    ///   JS -> C# (object) : { type: "ready" | "contentChanged" | "darkModeChanged" }
     ///   JS -> C# (string) : "CSV:" + csvText  — the current grid serialised as CSV.
     ///
     /// The CSV snapshot is pushed on load and after every change so the host
@@ -37,6 +37,7 @@ namespace ClarionCsvEditor
         private string _tempHtmlPath;
         private string _currentFilePath;
         private string _latestCsv = "";
+        private bool _pullingCsv;
         private bool _isDarkMode;
         private bool _isDirty;
 
@@ -102,6 +103,13 @@ namespace ClarionCsvEditor
                 _isWebViewReady = true;
 
                 webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+
+                // Let the IDE own Ctrl+S (File > Save). Disabling the browser
+                // accelerator keys stops WebView2 from treating Ctrl+S as its own
+                // "save page" command, so the keystroke is forwarded to the host
+                // and the IDE's menu shortcut fires even when the grid has focus.
+                webView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
+
                 webView.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
 
                 var resourcesPath = Path.Combine(GetAddinDir(), "Resources");
@@ -199,13 +207,24 @@ namespace ClarionCsvEditor
         }
 
         /// <summary>
-        /// Writes the current grid content to <paramref name="path"/>. Synchronous, using
-        /// the cached snapshot pushed from JS — safe to call from the IDE's File &gt; Save.
+        /// Writes the current grid content to <paramref name="path"/>. Synchronous — safe
+        /// to call from the IDE's File &gt; Save. Pulls the CSV live from the grid at save
+        /// time (see <see cref="GetCsvForSave"/>) so it always reflects the latest edits.
         /// Throws on I/O failure so the IDE's ObservedSave can report it.
         /// </summary>
         public void SaveToFile(string path)
         {
-            File.WriteAllText(path, _latestCsv ?? "");
+            WriteCsv(path, GetCsvForSave());
+        }
+
+        /// <summary>
+        /// Writes <paramref name="csv"/> to disk and updates save-related state (current
+        /// path, last-folder setting, dirty flag, tab name). Called by the IDE save
+        /// (File &gt; Save / Ctrl+S) via <see cref="SaveToFile"/>.
+        /// </summary>
+        private void WriteCsv(string path, string csv)
+        {
+            File.WriteAllText(path, csv ?? "");
 
             bool pathChanged = !string.Equals(_currentFilePath, path, StringComparison.OrdinalIgnoreCase);
             _currentFilePath = path;
@@ -218,45 +237,48 @@ namespace ClarionCsvEditor
         }
 
         /// <summary>
-        /// Save initiated from inside the editor (toolbar button / Ctrl+S in the page).
-        /// Writes to the current file, or prompts for a path when untitled.
+        /// Pulls the current CSV from the grid synchronously by calling getCsv() in the
+        /// page. The IDE's File &gt; Save is synchronous and blocking the UI thread on
+        /// ExecuteScriptAsync would deadlock (its completion is dispatched on that same
+        /// thread), so we pump the message loop until the task finishes. Falls back to the
+        /// last cached snapshot / original file text if the pull cannot complete.
         /// </summary>
-        public void SaveInteractive()
+        private string GetCsvForSave()
         {
-            if (string.IsNullOrEmpty(_currentFilePath))
+            string fallback = _latestCsv ?? "";
+            if (!_isWebViewReady || _pullingCsv) return fallback;
+
+            _pullingCsv = true;
+            try
             {
-                SaveInteractiveAs();
-                return;
+                var task = webView.ExecuteScriptAsync("getCsv()");
+
+                int guard = 0;
+                while (!task.IsCompleted && guard++ < 5000)
+                {
+                    Application.DoEvents();   // let WebView2 dispatch the script result
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                if (task.IsCompleted && !task.IsFaulted)
+                {
+                    var decoded = DecodeJsonString(task.Result);
+                    if (decoded != null)
+                    {
+                        _latestCsv = decoded;
+                        return decoded;
+                    }
+                }
             }
-            try { SaveToFile(_currentFilePath); }
             catch (Exception ex)
             {
-                MessageBox.Show("Could not save:\n" + ex.Message, "CSV Editor",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                System.Diagnostics.Debug.WriteLine("[CsvEditor] GetCsvForSave error: " + ex.Message);
             }
-        }
-
-        private void SaveInteractiveAs()
-        {
-            using (var dialog = new SaveFileDialog())
+            finally
             {
-                dialog.Filter = "CSV files (*.csv)|*.csv|TSV files (*.tsv)|*.tsv|All files (*.*)|*.*";
-                dialog.Title = "Save CSV File";
-                dialog.DefaultExt = "csv";
-                if (!string.IsNullOrEmpty(_currentFilePath))
-                {
-                    dialog.InitialDirectory = Path.GetDirectoryName(_currentFilePath);
-                    dialog.FileName = Path.GetFileName(_currentFilePath);
-                }
-
-                if (dialog.ShowDialog() != DialogResult.OK) return;
-                try { SaveToFile(dialog.FileName); }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Could not save:\n" + ex.Message, "CSV Editor",
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
+                _pullingCsv = false;
             }
+            return fallback;
         }
 
         #endregion
@@ -338,10 +360,6 @@ namespace ClarionCsvEditor
 
                     case "contentChanged":
                         IsDirty = true;
-                        break;
-
-                    case "saveRequested":
-                        SaveInteractive();
                         break;
 
                     case "darkModeChanged":
