@@ -39,9 +39,10 @@ function loadEditor() {
     // Expose the internals after the script's own declarations so the closures
     // capture the module-scoped let-bindings (table, headers, dirty, savedCsv...).
     const exposed = SOURCE + "\n;globalThis.__api = {" +
-        "loadCsv, getCsv, markDirty, markClean, firstRowLooksLikeHeader," +
-        "state: () => ({ dirty, savedCsv, delimiter, hasHeader, fileEol, fileEndsWithNewline })," +
-        "table: () => table, posted: () => null };";
+        "loadCsv, getCsv, markDirty, markClean, changeDelimiter, firstRowLooksLikeHeader," +
+        "state: () => ({ dirty, savedCsv, delimiter, hasHeader, colCount: headers.length, fileEol, fileEndsWithNewline })," +
+        "rows: () => table.getData()," +
+        "table: () => table };";
     vm.runInContext(exposed, ctx);
     return { api: ctx.__api, posted };
 }
@@ -104,4 +105,68 @@ test("dirty baseline: clean on load, dirty on edit, clean again when reverted", 
     api.markDirty();
     assert.strictEqual(api.state().dirty, false, "reverted to original -> clean");
     assert.strictEqual(dirtyMsgs(posted).pop().dirty, "false");
+});
+
+test("no-header mode emits no header line and round-trips", async () => {
+    const { api } = loadEditor();
+    const src = "1,2\r\n3,4\r\n"; // numeric first row -> detected as data
+    api.loadCsv(src, "f.csv", null);
+    await flush();
+    assert.strictEqual(api.state().hasHeader, false);
+    assert.strictEqual(api.getCsv(), src);
+});
+
+test("round-trips fields that require quoting (comma + embedded quote)", async () => {
+    const { api } = loadEditor();
+    const src = 'a,"b,c"\r\n"x""y",z\r\n'; // quoted comma; escaped embedded quote
+    api.loadCsv(src, "f.csv", null);
+    await flush();
+    assert.strictEqual(api.getCsv(), src);
+});
+
+test("auto-detects a tab delimiter", async () => {
+    const { api } = loadEditor();
+    api.loadCsv("a\tb\tc\n1\t2\t3\n", "f.csv", null);
+    await flush();
+    assert.strictEqual(api.state().delimiter, "\t");
+});
+
+test("auto-detects a pipe delimiter", async () => {
+    const { api } = loadEditor();
+    api.loadCsv("a|b|c\n1|2|3\n", "f.csv", null);
+    await flush();
+    assert.strictEqual(api.state().delimiter, "|");
+});
+
+// Documents a known auto-detect limitation: a 2-column tab/pipe file with no commas
+// falls back to comma (Papa's guesser favours comma on a low-column-count tie), so it
+// loads as a single column. .tsv files are unaffected (tab is forced), and the
+// delimiter picker is the manual workaround. Pinned so a future fix is noticed here.
+test("KNOWN LIMITATION: 2-column tab without commas mis-detects as comma", async () => {
+    const { api } = loadEditor();
+    api.loadCsv("a\tb\n1\t2\n", "f.csv", null);
+    await flush();
+    assert.strictEqual(api.state().delimiter, ",");
+    assert.strictEqual(api.state().colCount, 1);
+});
+
+test("keeps a blank row in the middle (only the trailing artifact is dropped)", async () => {
+    const { api } = loadEditor();
+    api.loadCsv("A,B\r\n1,2\r\n\r\n3,4\r\n", "f.csv", null);
+    await flush();
+    // rows: [1,2], [blank], [3,4] — three data rows, not two.
+    assert.strictEqual(api.rows().length, 3);
+});
+
+test("changing the delimiter re-parses the source", async () => {
+    const { api } = loadEditor();
+    api.loadCsv("a;b;c\r\n1;2;3\r\n", "f.csv", null);
+    await flush();
+    assert.strictEqual(api.state().delimiter, ";");
+    assert.strictEqual(api.state().colCount, 3);
+
+    api.changeDelimiter(","); // re-read with comma: each line is now one column
+    await flush();
+    assert.strictEqual(api.state().delimiter, ",");
+    assert.strictEqual(api.state().colCount, 1);
 });
