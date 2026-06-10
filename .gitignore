@@ -36,3 +36,9 @@ Desktop.ini
 
 # Claude Code local state
 .claude/
+
+# Node / Playwright (test tooling)
+node_modules/
+/test-results/
+/playwright-report/
+package-lock.json

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Offline unit-test harness for ClarionCsvEditor.JsonInterop. It LINKS the real
+    source file (not a copy) so it exercises exactly what the addin ships, without
+    referencing the WinForms/WebView2 addin assembly. No NuGet packages required.
+    Run it with: dotnet run  (from this folder)
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\ClarionCsvEditor\JsonInterop.cs" Link="JsonInterop.cs" />
+  </ItemGroup>
+
+</Project>
