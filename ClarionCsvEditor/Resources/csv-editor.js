@@ -234,9 +234,10 @@ function toggleDark() {
     post({ type: "darkModeChanged", isDark: enabled ? "true" : "false" });
 }
 
+// Host signals a successful save. The IDE tab's dirty '*' already conveys the
+// save state, so there is nothing to show here — just clear the in-page dirty flag.
 function onFileSaved(fileName) {
     setDirty(false);
-    setStatus("Saved");
 }
 
 /* ---- JS -> C# returning data ---- */
