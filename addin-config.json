@@ -1,5 +1,5 @@
 {
   "addinName": "ClarionCsvEditor",
-  "deploymentFolder": "CsvAddin",
-  "deploymentPath": "accessory\\addins\\CsvAddin"
+  "deploymentFolder": "ClarionCsvEditor",
+  "deploymentPath": "accessory\\addins\\ClarionCsvEditor"
 }

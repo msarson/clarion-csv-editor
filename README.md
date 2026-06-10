@@ -86,8 +86,10 @@ from the Clarion `bin` directory. Point it at your install via one of:
 
 ## Deploying
 
-Copy the build output to `<Clarion>\accessory\addins\CsvAddin\` (the
-`deploymentPath` in `addin-config.json`), including the `Resources/` folder.
+Copy the build output to `<Clarion>\accessory\addins\ClarionCsvEditor\` (the
+`deploymentPath` in `addin-config.json`), including the `Resources/` folder. This
+is the same folder the addin-finder installs into, so a dev deploy overwrites the
+released install.
 
 ## Roadmap
 
