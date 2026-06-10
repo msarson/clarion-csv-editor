@@ -109,6 +109,8 @@ function colDef(i) {
         headerSort: true,
         resizable: true,
         widthGrow: 1,
+        contextMenu: cellContextMenu,        // right-click a cell
+        headerContextMenu: headerContextMenu, // right-click a column header
     };
 }
 
@@ -433,6 +435,13 @@ function ordAfter(ref) {
     return next === Infinity ? ref + 1 : (ref + next) / 2;
 }
 
+// Largest _ord less than ref, so an inserted row sorts right before its anchor.
+function ordBefore(ref) {
+    let prev = -Infinity;
+    table.getData().forEach(r => { if (r._ord < ref && r._ord > prev) prev = r._ord; });
+    return prev === -Infinity ? ref - 1 : (ref + prev) / 2;
+}
+
 function doUndo() { if (table) table.undo(); }
 function doRedo() { if (table) table.redo(); }
 
@@ -499,19 +508,98 @@ function editColumnTitle(column) {
     input.addEventListener("blur", () => finish(true));
 }
 
-// Delete the selected column(s), or the last column if nothing is selected. Field
-// ids (c0..cN) must stay contiguous, so rebuild from a full matrix with the chosen
-// columns removed rather than dropping columns in place.
+// Delete the selected column(s), or the last column if nothing is selected.
 function deleteSelectedColumns() {
-    if (!table || headers.length === 0) return;
     let idxs = selectedColumnIndexes();
-    if (idxs.length === 0) idxs = [headers.length - 1];
-    if (idxs.length >= headers.length) return; // keep at least one column
+    if (idxs.length === 0 && headers.length) idxs = [headers.length - 1];
+    deleteColumnsByIndex(idxs);
+}
+
+// Delete the given data-column indexes. Field ids (c0..cN) must stay contiguous, so
+// rebuild from a full matrix with the chosen columns removed rather than dropping
+// columns in place.
+function deleteColumnsByIndex(idxs) {
+    if (!table) return;
+    idxs = (idxs || []).filter(i => i >= 0);
+    if (idxs.length === 0 || idxs.length >= headers.length) return; // keep >= 1 column
     const drop = new Set(idxs);
     const header = headers.filter((_, c) => !drop.has(c));
     const body = currentDataMatrix().map(row => row.filter((_, c) => !drop.has(c)));
     buildFrom(hasHeader ? [header, ...body] : body);
     lastBuild.then(() => { markDirty(); refreshStatus(); });
+}
+
+/* ---- Context menus (right-click) ---- */
+
+function colIndexOf(column) {
+    const f = column.getField();
+    return f && /^c\d+$/.test(f) ? parseInt(f.substring(1), 10) : -1;
+}
+
+// Insert a blank row above/below the given row, positioned in logical (_ord) order.
+function insertRowRelative(row, below) {
+    if (!table) return;
+    const refOrd = row.getData()._ord;
+    const blank = { _ord: below ? ordAfter(refOrd) : ordBefore(refOrd) };
+    headers.forEach((_, c) => { blank[fieldId(c)] = ""; });
+    table.addRow(blank, !below, row).then(() => { markDirty(); refreshStatus(); });
+}
+
+function duplicateRow(row) {
+    if (!table) return;
+    const src = row.getData();
+    const copy = { _ord: ordAfter(src._ord) };
+    headers.forEach((_, c) => { const v = src[fieldId(c)]; copy[fieldId(c)] = v == null ? "" : v; });
+    table.addRow(copy, false, row).then(() => { markDirty(); refreshStatus(); });
+}
+
+// Delete the current selection if it includes the clicked row, else just that row.
+function deleteRowsFor(row) {
+    if (!table) return;
+    let rows = selectedRows();
+    if (!rows.some(r => r === row)) rows = [row];
+    if (rows.length === 0) return;
+    Promise.all(rows.map(r => r.delete())).then(() => { markDirty(); refreshStatus(); });
+}
+
+// Paste the clipboard by replaying it through Tabulator's own paste handler (range
+// parser/action), so a menu Paste behaves exactly like Ctrl+V.
+async function pasteFromClipboard() {
+    try {
+        const text = await navigator.clipboard.readText();
+        if (!text) return;
+        const dt = new DataTransfer();
+        dt.setData("text/plain", text);
+        document.querySelector(".tabulator-tableholder")
+            .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    } catch (e) {
+        /* clipboard read unavailable (permission/context) — Ctrl+V still works */
+    }
+}
+
+// Cell right-click menu. Tabulator invokes this with (event, cellComponent), and
+// passes the same cell to each item's action.
+function cellContextMenu() {
+    return [
+        { label: "Insert row above", action: (e, cell) => insertRowRelative(cell.getRow(), false) },
+        { label: "Insert row below", action: (e, cell) => insertRowRelative(cell.getRow(), true) },
+        { label: "Duplicate row", action: (e, cell) => duplicateRow(cell.getRow()) },
+        { label: "Delete row(s)", action: (e, cell) => deleteRowsFor(cell.getRow()) },
+        { separator: true },
+        { label: "Delete column", action: (e, cell) => deleteColumnsByIndex([colIndexOf(cell.getColumn())]) },
+        { separator: true },
+        { label: "Copy", action: () => { if (table) table.copyToClipboard("range"); } },
+        { label: "Paste", action: () => pasteFromClipboard() },
+    ];
+}
+
+// Column-header right-click menu. Tabulator invokes this with (event, columnComponent).
+function headerContextMenu() {
+    return [
+        { label: "Rename column", action: (e, column) => editColumnTitle(column) },
+        { label: "Insert column", action: () => addColumn() },
+        { label: "Delete column", action: (e, column) => deleteColumnsByIndex([colIndexOf(column)]) },
+    ];
 }
 
 /* ---- Search ---- */
